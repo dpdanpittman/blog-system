@@ -15,6 +15,180 @@
     },
     {
       "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "dOVJ9NCNKfWj3aFP",
+          "mode": "list",
+          "cachedResultName": "blog_system_state"
+        },
+        "filters": {
+          "conditions": [{"keyName": "id", "keyValue": "1"}]
+        },
+        "options": {}
+      },
+      "id": "get-system-state",
+      "name": "Get System State",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [460, 400],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const systemState = $input.first().json || {};\nconst isPaused = systemState.is_paused === true || systemState.is_paused === 'true';\n\nconsole.log('🔍 Agent 1: System state check - is_paused:', isPaused);\n\nif (isPaused) {\n  console.log('⏸️ Agent 1: System is PAUSED. Skipping this run.');\n  console.log('   Paused at:', systemState.paused_at);\n  console.log('   Paused by:', systemState.paused_by);\n}\n\nreturn [{\n  json: {\n    isPaused: isPaused,\n    pausedAt: systemState.paused_at || null,\n    pausedBy: systemState.paused_by || null\n  }\n}];"
+      },
+      "id": "check-pause",
+      "name": "Check If Paused",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-not-paused",
+              "leftValue": "={{ $json.isPaused }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-not-paused",
+      "name": "If Not Paused",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "WFdEDjlAxerMczXQ",
+          "mode": "list",
+          "cachedResultName": "blog_topic_queue"
+        },
+        "filters": {
+          "conditions": [{"keyName": "status", "keyValue": "pending"}]
+        },
+        "options": {}
+      },
+      "id": "check-queue",
+      "name": "Check Topic Queue",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [1120, 400],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const queueItems = $input.all().map(i => i.json);\nconst hasQueuedTopic = queueItems.length > 0 && queueItems[0].topic;\n\nconsole.log('📋 Agent 1: Queue check - items found:', queueItems.length);\nif (hasQueuedTopic) {\n  console.log('✅ Agent 1: Found queued topic:', queueItems[0].topic);\n}\n\nreturn [{\n  json: {\n    hasQueuedTopic: hasQueuedTopic,\n    queuedItem: hasQueuedTopic ? queueItems[0] : null\n  }\n}];"
+      },
+      "id": "eval-queue",
+      "name": "Evaluate Queue",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-has-queued",
+              "leftValue": "={{ $json.hasQueuedTopic }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-queued-topic",
+      "name": "If Queued Topic",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1560, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst queuedItem = data.queuedItem;\n\nconst timestamp = new Date().toISOString();\n\nconsole.log('🎯 Agent 1: Processing queued topic:', queuedItem.topic);\n\nreturn [{\n  json: {\n    topic: queuedItem.topic,\n    url: queuedItem.url || '',\n    style: 'accessible-explanation',\n    length: 'short',\n    angle: 'general overview',\n    timestamp: timestamp,\n    phase: 'PHASE 5 - From Topic Queue',\n    source: queuedItem.source || 'telegram',\n    priority: queuedItem.priority || 1,\n    queueId: queuedItem.id\n  }\n}];"
+      },
+      "id": "format-queued-topic",
+      "name": "Format Queued Topic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "value": "WFdEDjlAxerMczXQ",
+          "mode": "list",
+          "cachedResultName": "blog_topic_queue"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [{"keyName": "id", "keyValue": "={{ $(\"Evaluate Queue\").first().json.queuedItem.id }}"}]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "processing"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "update-queue-status",
+      "name": "Update Queue Status",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://n8n.mabus.ai/webhook/phase5-agent-2",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $(\"Format Queued Topic\").first().json }}",
+        "options": {"timeout": 30000}
+      },
+      "id": "call-agent-2-queued",
+      "name": "Call Agent 2 (Queued)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2220, 300]
+    },
+    {
+      "parameters": {
         "url": "https://hacker-news.firebaseio.com/v0/topstories.json",
         "options": {"timeout": 10000}
       },
@@ -22,17 +196,17 @@
       "name": "Fetch HackerNews Top Stories",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [460, 400]
+      "position": [1780, 500]
     },
     {
       "parameters": {
-        "jsCode": "// n8n splits the array into individual items\n// So we need to collect all items and extract their values\nconst allItems = $input.all();\nconsole.log('✅ Received', allItems.length, 'story IDs from HackerNews');\n\n// Extract the ID from each item (each item.json is a single number)\nconst allStoryIds = allItems.map(item => item.json);\n\n// Take first 30 for better variety (to avoid duplicates)\nconst topIds = allStoryIds.slice(0, 30);\nconsole.log('✅ Selected top 30 IDs:', topIds);\n\n// Return each as a separate item with storyId property\nreturn topIds.map(id => ({\n  json: {\n    storyId: id\n  }\n}));"
+        "jsCode": "const allItems = $input.all();\nconsole.log('✅ HackerNews: Received', allItems.length, 'story IDs');\n\nconst allStoryIds = allItems.map(item => item.json);\nconst topIds = allStoryIds.slice(0, 30);\nconsole.log('✅ HackerNews: Selected top 30 IDs');\n\nreturn topIds.map(id => ({\n  json: {\n    storyId: id\n  }\n}));"
       },
       "id": "split-ids",
       "name": "Split Story IDs",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [680, 400]
+      "position": [2000, 500]
     },
     {
       "parameters": {
@@ -43,17 +217,134 @@
       "name": "Fetch Story Details",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [900, 400]
+      "position": [2220, 500]
     },
     {
       "parameters": {
-        "jsCode": "const stories = $input.all();\n\n// Filter for AI/ML/tech related stories (broadened to catch more variety)\nconst keywords = ['ai', 'ml', 'machine learning', 'artificial intelligence', 'llm', 'gpt', 'model', 'neural', 'deep learning', 'data science', 'automation', 'robotics', 'quantum', 'tech', 'software', 'programming', 'algorithm', 'computing', 'developer', 'api', 'open source', 'security', 'privacy', 'crypto', 'blockchain', 'startup', 'cloud', 'database', 'web', 'mobile', 'app', 'code', 'language', 'framework', 'tool', 'platform'];\n\n// Skip URLs we don't want (GitHub repos, show HN, etc)\nconst skipDomains = ['github.com', 'gitlab.com'];\nconst skipPrefixes = ['Show HN:', 'Ask HN:', 'Tell HN:'];\n\nconst relevantStories = stories.filter(item => {\n  const story = item.json;\n  if (!story || !story.title) return false;\n  \n  const title = story.title;\n  const url = story.url || '';\n  \n  // Skip show/ask/tell HN posts\n  if (skipPrefixes.some(prefix => title.startsWith(prefix))) {\n    return false;\n  }\n  \n  // Skip GitHub/GitLab repos (prefer articles)\n  if (skipDomains.some(domain => url.includes(domain))) {\n    return false;\n  }\n  \n  // Check for AI/tech keywords\n  const titleLower = title.toLowerCase();\n  return keywords.some(kw => titleLower.includes(kw));\n});\n\nconsole.log('✅ Agent 1: Found', relevantStories.length, 'relevant stories (filtered from', stories.length, 'total)');\n\nif (relevantStories.length === 0) {\n  console.log('⚠️ No relevant stories found, using first story as fallback');\n  // Return in same format as relevant stories\n  return [{\n    json: {\n      relevantStories: stories.length > 0 ? [stories[0].json] : []\n    }\n  }];\n}\n\n// Store ALL relevant stories for duplicate detection\n// Return a single item with all stories as an array\nconsole.log('✅ Returning', relevantStories.length, 'relevant stories for duplicate check');\nreturn [{\n  json: {\n    relevantStories: relevantStories.map(item => item.json)\n  }\n}];"
+        "jsCode": "const stories = $input.all();\nconsole.log('✅ HackerNews: Fetched', stories.length, 'story details');\n\nreturn [{\n  json: {\n    source: 'hackernews',\n    stories: stories.map(item => ({\n      title: item.json.title || '',\n      url: item.json.url || '',\n      score: item.json.score || 0,\n      id: item.json.id,\n      source: 'hackernews'\n    })).filter(s => s.title && s.url)\n  }\n}];"
+      },
+      "id": "format-hn-stories",
+      "name": "Format HN Stories",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2440, 500]
+    },
+    {
+      "parameters": {
+        "url": "https://www.reddit.com/r/programming+machinelearning+artificial+technology/hot.json?limit=25",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "n8n-blog-bot/1.0"
+            }
+          ]
+        },
+        "options": {"timeout": 15000}
+      },
+      "id": "fetch-reddit",
+      "name": "Fetch Reddit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1780, 700]
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst posts = response?.data?.children || [];\n\nconsole.log('✅ Reddit: Received', posts.length, 'posts');\n\n// Filter for external links (not self posts)\nconst externalPosts = posts\n  .map(p => p.data)\n  .filter(p => !p.is_self && p.url && !p.url.includes('reddit.com'))\n  .map(p => ({\n    title: p.title || '',\n    url: p.url || '',\n    score: p.score || 0,\n    subreddit: p.subreddit,\n    source: 'reddit'\n  }));\n\nconsole.log('✅ Reddit: Filtered to', externalPosts.length, 'external links');\n\nreturn [{\n  json: {\n    source: 'reddit',\n    stories: externalPosts\n  }\n}];"
+      },
+      "id": "format-reddit-stories",
+      "name": "Format Reddit Stories",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 700]
+    },
+    {
+      "parameters": {
+        "url": "https://lobste.rs/hottest.json",
+        "options": {"timeout": 10000}
+      },
+      "id": "fetch-lobsters",
+      "name": "Fetch Lobsters",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1780, 850]
+    },
+    {
+      "parameters": {
+        "jsCode": "const stories = $input.first().json || [];\n\nconsole.log('✅ Lobsters: Received', stories.length, 'stories');\n\n// Take top 20 stories with external URLs\nconst topStories = stories\n  .slice(0, 20)\n  .filter(s => s.url && !s.url.includes('lobste.rs'))\n  .map(s => ({\n    title: s.title || '',\n    url: s.url || '',\n    score: s.score || 0,\n    tags: s.tags || [],\n    source: 'lobsters'\n  }));\n\nconsole.log('✅ Lobsters: Filtered to', topStories.length, 'external links');\n\nreturn [{\n  json: {\n    source: 'lobsters',\n    stories: topStories\n  }\n}];"
+      },
+      "id": "format-lobsters-stories",
+      "name": "Format Lobsters Stories",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 850]
+    },
+    {
+      "parameters": {
+        "url": "https://api.twitter.com/2/tweets/search/recent",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "(AI OR \"machine learning\" OR programming) -is:retweet lang:en has:links"
+            },
+            {
+              "name": "max_results",
+              "value": "25"
+            },
+            {
+              "name": "tweet.fields",
+              "value": "entities,public_metrics"
+            }
+          ]
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {"timeout": 15000}
+      },
+      "id": "fetch-twitter",
+      "name": "Fetch Twitter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1780, 1000],
+      "credentials": {
+        "oAuth2Api": {
+          "id": "JFyR6tScyLfoE0t6",
+          "name": "X OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst tweets = response?.data || [];\n\nconsole.log('✅ Twitter: Received', tweets.length, 'tweets');\n\n// Extract linked URLs from tweets\nconst twitterStories = [];\n\ntweets.forEach(tweet => {\n  const urls = tweet.entities?.urls || [];\n  const metrics = tweet.public_metrics || {};\n  \n  urls.forEach(urlEntity => {\n    // Skip twitter.com and t.co links\n    const expandedUrl = urlEntity.expanded_url || urlEntity.url || '';\n    if (expandedUrl && !expandedUrl.includes('twitter.com') && !expandedUrl.includes('t.co')) {\n      twitterStories.push({\n        title: urlEntity.title || tweet.text?.substring(0, 100) || 'Twitter Link',\n        url: expandedUrl,\n        score: (metrics.like_count || 0) + (metrics.retweet_count || 0) * 2,\n        source: 'twitter'\n      });\n    }\n  });\n});\n\nconsole.log('✅ Twitter: Extracted', twitterStories.length, 'external links');\n\nreturn [{\n  json: {\n    source: 'twitter',\n    stories: twitterStories\n  }\n}];"
+      },
+      "id": "format-twitter-stories",
+      "name": "Format Twitter Stories",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 1000]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Collect stories from all sources\nconst hnData = $(\"Format HN Stories\").first()?.json || {stories: []};\nconst redditData = $(\"Format Reddit Stories\").first()?.json || {stories: []};\nconst lobstersData = $(\"Format Lobsters Stories\").first()?.json || {stories: []};\nconst twitterData = $(\"Format Twitter Stories\").first()?.json || {stories: []};\n\nconst allStories = [\n  ...hnData.stories,\n  ...redditData.stories,\n  ...lobstersData.stories,\n  ...twitterData.stories\n];\n\nconsole.log('🔀 Merge: Total stories before dedup:', allStories.length);\nconsole.log('   - HackerNews:', hnData.stories.length);\nconsole.log('   - Reddit:', redditData.stories.length);\nconsole.log('   - Lobsters:', lobstersData.stories.length);\nconsole.log('   - Twitter:', twitterData.stories.length);\n\n// Deduplicate by URL (normalize URLs first)\nfunction normalizeUrl(url) {\n  try {\n    const u = url.toLowerCase()\n      .replace(/^https?:\\/\\//, '')\n      .replace(/^www\\./, '')\n      .replace(/\\/$/, '');\n    return u;\n  } catch {\n    return url;\n  }\n}\n\nconst seen = new Set();\nconst uniqueStories = allStories.filter(story => {\n  const normalized = normalizeUrl(story.url);\n  if (seen.has(normalized)) {\n    return false;\n  }\n  seen.add(normalized);\n  return true;\n});\n\nconsole.log('🔀 Merge: After dedup:', uniqueStories.length, 'unique stories');\n\n// Sort by score (descending)\nuniqueStories.sort((a, b) => (b.score || 0) - (a.score || 0));\n\nreturn [{\n  json: {\n    mergedStories: uniqueStories,\n    sourceBreakdown: {\n      hackernews: hnData.stories.length,\n      reddit: redditData.stories.length,\n      lobsters: lobstersData.stories.length,\n      twitter: twitterData.stories.length\n    }\n  }\n}];"
+      },
+      "id": "merge-sources",
+      "name": "Merge All Sources",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2660, 750]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst stories = data.mergedStories || [];\n\n// Filter for AI/ML/tech related stories\nconst keywords = ['ai', 'ml', 'machine learning', 'artificial intelligence', 'llm', 'gpt', 'model', 'neural', 'deep learning', 'data science', 'automation', 'robotics', 'quantum', 'tech', 'software', 'programming', 'algorithm', 'computing', 'developer', 'api', 'open source', 'security', 'privacy', 'crypto', 'blockchain', 'startup', 'cloud', 'database', 'web', 'mobile', 'app', 'code', 'language', 'framework', 'tool', 'platform'];\n\n// Skip URLs we don't want (GitHub repos, show HN, etc)\nconst skipDomains = ['github.com', 'gitlab.com'];\nconst skipPrefixes = ['Show HN:', 'Ask HN:', 'Tell HN:'];\n\nconst relevantStories = stories.filter(story => {\n  if (!story || !story.title) return false;\n  \n  const title = story.title;\n  const url = story.url || '';\n  \n  // Skip show/ask/tell HN posts\n  if (skipPrefixes.some(prefix => title.startsWith(prefix))) {\n    return false;\n  }\n  \n  // Skip GitHub/GitLab repos (prefer articles)\n  if (skipDomains.some(domain => url.includes(domain))) {\n    return false;\n  }\n  \n  // Check for AI/tech keywords\n  const titleLower = title.toLowerCase();\n  return keywords.some(kw => titleLower.includes(kw));\n});\n\nconsole.log('✅ Agent 1: Found', relevantStories.length, 'relevant stories (filtered from', stories.length, 'total)');\n\nif (relevantStories.length === 0) {\n  console.log('⚠️ No relevant stories found, using first story as fallback');\n  return [{\n    json: {\n      relevantStories: stories.length > 0 ? [stories[0]] : [],\n      sourceBreakdown: data.sourceBreakdown\n    }\n  }];\n}\n\nconsole.log('✅ Returning', relevantStories.length, 'relevant stories for duplicate check');\nreturn [{\n  json: {\n    relevantStories: relevantStories,\n    sourceBreakdown: data.sourceBreakdown\n  }\n}];"
       },
       "id": "filter-relevant",
       "name": "Filter for AI/Tech Topics",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1120, 400]
+      "position": [2880, 750]
     },
     {
       "parameters": {
@@ -74,27 +365,27 @@
       "name": "Fetch Recent Posts",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1340, 400]
+      "position": [3100, 750]
     },
     {
       "parameters": {
-        "jsCode": "const relevantStoriesData = $(\"Filter for AI/Tech Topics\").first().json;\nconst relevantStories = relevantStoriesData.relevantStories || [];\n\nconst recentPostsResponse = $input.first().json;\n// Try different response formats\nlet recentPosts = [];\nif (recentPostsResponse.posts) {\n  recentPosts = recentPostsResponse.posts;\n  console.log('📡 Agent 1: Blog API returned {posts: [...]} format');\n} else if (Array.isArray(recentPostsResponse)) {\n  recentPosts = recentPostsResponse;\n  console.log('📡 Agent 1: Blog API returned direct array format');\n} else {\n  console.log('⚠️ Agent 1: Unknown Blog API response format:', typeof recentPostsResponse);\n  recentPosts = [];\n}\n\nconsole.log('🔍 Agent 1: relevantStories:', relevantStories.length);\nconsole.log('🔍 Agent 1: recentPosts:', recentPosts.length);\n\nif (relevantStories.length === 0) {\n  throw new Error('No relevant stories found from HackerNews');\n}\n\n// Enhanced duplicate detection with two checks:\n// 1. Word overlap (handles general similarity)\n// 2. Key entity overlap (catches same topic with different wording)\nfunction checkDuplicate(storyTitle, postTitle) {\n  // Split on non-alphanumeric to handle punctuation\n  const storyWords = storyTitle.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 3);\n  const postWords = postTitle.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 3);\n\n  // Check 1: Overall word overlap (40% threshold)\n  const wordMatches = storyWords.filter(w => postWords.includes(w)).length;\n  const wordOverlap = wordMatches / Math.min(storyWords.length, postWords.length);\n  const isDuplicateByWords = wordOverlap > 0.4;\n\n  // Check 2: Key entity overlap (2+ significant shared words = same topic)\n  // Extract words >5 chars or starting with capital (proper nouns, technical terms)\n  const storyKeyWords = storyTitle.split(/[^a-zA-Z0-9]+/).filter(w =>\n    w.length > 5 || /^[A-Z]/.test(w)\n  ).map(w => w.toLowerCase());\n  const postKeyWords = postTitle.split(/[^a-zA-Z0-9]+/).filter(w =>\n    w.length > 5 || /^[A-Z]/.test(w)\n  ).map(w => w.toLowerCase());\n\n  const keyMatches = storyKeyWords.filter(w => postKeyWords.includes(w));\n  const isDuplicateByKeys = keyMatches.length >= 2;\n\n  console.log('  🔍 Comparing:', storyTitle.substring(0, 60));\n  console.log('           vs:', postTitle.substring(0, 60));\n  console.log('  📊 Word overlap:', wordMatches, '/', Math.min(storyWords.length, postWords.length), '=', (wordOverlap * 100).toFixed(1) + '%', isDuplicateByWords ? '❌' : '✅');\n  console.log('  🔑 Key entities:', keyMatches.length, 'shared -', keyMatches.slice(0, 3).join(', '), isDuplicateByKeys ? '❌' : '✅');\n\n  // Duplicate if EITHER check passes\n  const isDuplicate = isDuplicateByWords || isDuplicateByKeys;\n  console.log('  🎯 Result:', isDuplicate ? '❌ DUPLICATE' : '✅ unique');\n\n  return isDuplicate;\n}\n\n// Find first non-duplicate story\nlet selectedStory = null;\nlet selectedIndex = -1;\n\nfor (let i = 0; i < relevantStories.length; i++) {\n  const story = relevantStories[i];\n  console.log('\\n🔎 Checking story #' + (i + 1) + ':', story.title);\n  \n  const isDuplicate = recentPosts.length > 0 && recentPosts.some(post => \n    checkDuplicate(story.title || '', post.title || '')\n  );\n  \n  if (!isDuplicate) {\n    selectedStory = story;\n    selectedIndex = i;\n    console.log('✅ Agent 1: Selected story #' + (i + 1) + ':', story.title);\n    break;\n  } else {\n    console.log('⏭️ Agent 1: Story #' + (i + 1) + ' is duplicate, skipping');\n  }\n}\n\n// Stop workflow if all stories are duplicates\nif (!selectedStory) {\n  console.log('\\n🛑 Agent 1: All', relevantStories.length, 'stories are duplicates of recent posts');\n  console.log('🛑 Stopping workflow to prevent duplicate content');\n  throw new Error('All ' + relevantStories.length + ' relevant stories are duplicates of recent blog posts. Skipping to avoid republishing same content.');\n}\n\nreturn [{\n  json: {\n    selectedStory: selectedStory,\n    selectedIndex: selectedIndex,\n    totalRelevantStories: relevantStories.length,\n    recentPostsCount: recentPosts.length\n  }\n}];"
+        "jsCode": "const relevantStoriesData = $(\"Filter for AI/Tech Topics\").first().json;\nconst relevantStories = relevantStoriesData.relevantStories || [];\nconst sourceBreakdown = relevantStoriesData.sourceBreakdown || {};\n\nconst recentPostsResponse = $input.first().json;\nlet recentPosts = [];\nif (recentPostsResponse.posts) {\n  recentPosts = recentPostsResponse.posts;\n  console.log('📡 Agent 1: Blog API returned {posts: [...]} format');\n} else if (Array.isArray(recentPostsResponse)) {\n  recentPosts = recentPostsResponse;\n  console.log('📡 Agent 1: Blog API returned direct array format');\n} else {\n  console.log('⚠️ Agent 1: Unknown Blog API response format:', typeof recentPostsResponse);\n  recentPosts = [];\n}\n\nconsole.log('🔍 Agent 1: relevantStories:', relevantStories.length);\nconsole.log('🔍 Agent 1: recentPosts:', recentPosts.length);\n\nif (relevantStories.length === 0) {\n  throw new Error('No relevant stories found from any source');\n}\n\n// Enhanced duplicate detection\nfunction checkDuplicate(storyTitle, postTitle) {\n  const storyWords = storyTitle.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 3);\n  const postWords = postTitle.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 3);\n\n  const wordMatches = storyWords.filter(w => postWords.includes(w)).length;\n  const wordOverlap = wordMatches / Math.min(storyWords.length, postWords.length);\n  const isDuplicateByWords = wordOverlap > 0.4;\n\n  const storyKeyWords = storyTitle.split(/[^a-zA-Z0-9]+/).filter(w =>\n    w.length > 5 || /^[A-Z]/.test(w)\n  ).map(w => w.toLowerCase());\n  const postKeyWords = postTitle.split(/[^a-zA-Z0-9]+/).filter(w =>\n    w.length > 5 || /^[A-Z]/.test(w)\n  ).map(w => w.toLowerCase());\n\n  const keyMatches = storyKeyWords.filter(w => postKeyWords.includes(w));\n  const isDuplicateByKeys = keyMatches.length >= 2;\n\n  return isDuplicateByWords || isDuplicateByKeys;\n}\n\n// Find first non-duplicate story\nlet selectedStory = null;\nlet selectedIndex = -1;\n\nfor (let i = 0; i < relevantStories.length; i++) {\n  const story = relevantStories[i];\n  console.log('\\n🔎 Checking story #' + (i + 1) + ':', story.title?.substring(0, 60));\n  \n  const isDuplicate = recentPosts.length > 0 && recentPosts.some(post => \n    checkDuplicate(story.title || '', post.title || '')\n  );\n  \n  if (!isDuplicate) {\n    selectedStory = story;\n    selectedIndex = i;\n    console.log('✅ Agent 1: Selected story #' + (i + 1) + ' from', story.source, ':', story.title);\n    break;\n  } else {\n    console.log('⏭️ Agent 1: Story #' + (i + 1) + ' is duplicate, skipping');\n  }\n}\n\nif (!selectedStory) {\n  console.log('\\n🛑 Agent 1: All', relevantStories.length, 'stories are duplicates of recent posts');\n  throw new Error('All ' + relevantStories.length + ' relevant stories are duplicates of recent blog posts.');\n}\n\nreturn [{\n  json: {\n    selectedStory: selectedStory,\n    selectedIndex: selectedIndex,\n    totalRelevantStories: relevantStories.length,\n    recentPostsCount: recentPosts.length,\n    sourceBreakdown: sourceBreakdown\n  }\n}];"
       },
       "id": "check-duplicates",
       "name": "Check for Duplicates",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1560, 400]
+      "position": [3320, 750]
     },
     {
       "parameters": {
-        "jsCode": "const data = $input.first().json;\nconst story = data.selectedStory;\n\nconst topic = story.title || 'AI and Technology Trends';\nconst url = story.url || '';\n\nconsole.log('✅ Agent 1: Final selection - Story #' + (data.selectedIndex + 1) + ' of ' + data.totalRelevantStories);\nconsole.log('✅ Agent 1: Topic:', topic);\nconsole.log('✅ Agent 1: URL:', url);\n\nconst timestamp = new Date().toISOString();\n\nreturn [{\n  json: {\n    topic: topic,\n    url: url,\n    style: 'accessible-explanation',\n    length: 'short',\n    angle: 'general overview',\n    timestamp: timestamp,\n    phase: 'PHASE 5 - Automated Topic Discovery with Duplicate Detection',\n    sourceStoryId: story.id,\n    sourceScore: story.score,\n    selectedIndex: data.selectedIndex,\n    totalRelevantStories: data.totalRelevantStories,\n    recentPostsChecked: data.recentPostsCount\n  }\n}];"
+        "jsCode": "const data = $input.first().json;\nconst story = data.selectedStory;\n\nconst topic = story.title || 'AI and Technology Trends';\nconst url = story.url || '';\n\nconsole.log('✅ Agent 1: Final selection - Story #' + (data.selectedIndex + 1) + ' of ' + data.totalRelevantStories);\nconsole.log('✅ Agent 1: Topic:', topic);\nconsole.log('✅ Agent 1: Source:', story.source);\nconsole.log('✅ Agent 1: URL:', url);\n\nconst timestamp = new Date().toISOString();\n\nreturn [{\n  json: {\n    topic: topic,\n    url: url,\n    style: 'accessible-explanation',\n    length: 'short',\n    angle: 'general overview',\n    timestamp: timestamp,\n    phase: 'PHASE 5 - Multi-Source Topic Discovery',\n    source: story.source,\n    sourceScore: story.score,\n    selectedIndex: data.selectedIndex,\n    totalRelevantStories: data.totalRelevantStories,\n    recentPostsChecked: data.recentPostsCount,\n    sourceBreakdown: data.sourceBreakdown\n  }\n}];"
       },
       "id": "format-topic",
       "name": "Format Topic Data",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1780, 400]
+      "position": [3540, 750]
     },
     {
       "parameters": {
@@ -109,33 +400,95 @@
       "name": "Call Agent 2",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2000, 400]
+      "position": [3760, 750]
     }
   ],
   "connections": {
     "Schedule Trigger": {
-      "main": [[{"node": "Fetch HackerNews Top Stories"}]]
+      "main": [[{"node": "Get System State", "type": "main", "index": 0}]]
+    },
+    "Get System State": {
+      "main": [[{"node": "Check If Paused", "type": "main", "index": 0}]]
+    },
+    "Check If Paused": {
+      "main": [[{"node": "If Not Paused", "type": "main", "index": 0}]]
+    },
+    "If Not Paused": {
+      "main": [
+        [{"node": "Check Topic Queue", "type": "main", "index": 0}],
+        []
+      ]
+    },
+    "Check Topic Queue": {
+      "main": [[{"node": "Evaluate Queue", "type": "main", "index": 0}]]
+    },
+    "Evaluate Queue": {
+      "main": [[{"node": "If Queued Topic", "type": "main", "index": 0}]]
+    },
+    "If Queued Topic": {
+      "main": [
+        [{"node": "Format Queued Topic", "type": "main", "index": 0}],
+        [
+          {"node": "Fetch HackerNews Top Stories", "type": "main", "index": 0},
+          {"node": "Fetch Reddit", "type": "main", "index": 0},
+          {"node": "Fetch Lobsters", "type": "main", "index": 0},
+          {"node": "Fetch Twitter", "type": "main", "index": 0}
+        ]
+      ]
+    },
+    "Format Queued Topic": {
+      "main": [[{"node": "Update Queue Status", "type": "main", "index": 0}]]
+    },
+    "Update Queue Status": {
+      "main": [[{"node": "Call Agent 2 (Queued)", "type": "main", "index": 0}]]
+    },
+    "Call Agent 2 (Queued)": {
+      "main": [[]]
     },
     "Fetch HackerNews Top Stories": {
-      "main": [[{"node": "Split Story IDs"}]]
+      "main": [[{"node": "Split Story IDs", "type": "main", "index": 0}]]
     },
     "Split Story IDs": {
-      "main": [[{"node": "Fetch Story Details"}]]
+      "main": [[{"node": "Fetch Story Details", "type": "main", "index": 0}]]
     },
     "Fetch Story Details": {
-      "main": [[{"node": "Filter for AI/Tech Topics"}]]
+      "main": [[{"node": "Format HN Stories", "type": "main", "index": 0}]]
+    },
+    "Format HN Stories": {
+      "main": [[{"node": "Merge All Sources", "type": "main", "index": 0}]]
+    },
+    "Fetch Reddit": {
+      "main": [[{"node": "Format Reddit Stories", "type": "main", "index": 0}]]
+    },
+    "Format Reddit Stories": {
+      "main": [[{"node": "Merge All Sources", "type": "main", "index": 1}]]
+    },
+    "Fetch Lobsters": {
+      "main": [[{"node": "Format Lobsters Stories", "type": "main", "index": 0}]]
+    },
+    "Format Lobsters Stories": {
+      "main": [[{"node": "Merge All Sources", "type": "main", "index": 2}]]
+    },
+    "Fetch Twitter": {
+      "main": [[{"node": "Format Twitter Stories", "type": "main", "index": 0}]]
+    },
+    "Format Twitter Stories": {
+      "main": [[{"node": "Merge All Sources", "type": "main", "index": 3}]]
+    },
+    "Merge All Sources": {
+      "main": [[{"node": "Filter for AI/Tech Topics", "type": "main", "index": 0}]]
     },
     "Filter for AI/Tech Topics": {
-      "main": [[{"node": "Fetch Recent Posts"}]]
+      "main": [[{"node": "Fetch Recent Posts", "type": "main", "index": 0}]]
     },
     "Fetch Recent Posts": {
-      "main": [[{"node": "Check for Duplicates"}]]
+      "main": [[{"node": "Check for Duplicates", "type": "main", "index": 0}]]
     },
     "Check for Duplicates": {
-      "main": [[{"node": "Format Topic Data"}]]
+      "main": [[{"node": "Format Topic Data", "type": "main", "index": 0}]]
     },
     "Format Topic Data": {
-      "main": [[{"node": "Call Agent 2"}]]
+      "main": [[{"node": "Call Agent 2", "type": "main", "index": 0}]]
     },
     "Call Agent 2": {
       "main": [[]]

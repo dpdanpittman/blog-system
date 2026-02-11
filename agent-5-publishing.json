@@ -48,17 +48,25 @@
     {
       "parameters": {
         "operation": "insert",
-        "table": "blog_validation_failures",
-        "fieldsUi": {
-          "fieldValues": [
-            {"fieldName": "issue_type", "fieldValue": "={{ $json.issue_type }}"},
-            {"fieldName": "severity", "fieldValue": "={{ $json.severity }}"},
-            {"fieldName": "message", "fieldValue": "={{ $json.message }}"},
-            {"fieldName": "topic", "fieldValue": "={{ $json.topic }}"},
-            {"fieldName": "word_count", "fieldValue": "={{ $json.word_count }}"},
-            {"fieldName": "quality_score", "fieldValue": "={{ $json.quality_score }}"},
-            {"fieldName": "timestamp", "fieldValue": "={{ $json.timestamp }}"}
-          ]
+        "dataTableId": {
+          "__rl": true,
+          "value": "lBSbnItNWZOJ2N9p",
+          "mode": "list",
+          "cachedResultName": "blog_validation_failures"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "issue_type": "={{ $json.issue_type }}",
+            "severity": "={{ $json.severity }}",
+            "message": "={{ $json.message }}",
+            "topic": "={{ $json.topic }}",
+            "word_count": "={{ $json.word_count }}",
+            "quality_score": "={{ $json.quality_score }}",
+            "timestamp": "={{ $json.timestamp }}"
+          },
+          "matchingColumns": [],
+          "schema": []
         },
         "options": {}
       },
@@ -81,18 +89,26 @@
     {
       "parameters": {
         "operation": "insert",
-        "table": "blog_quality_metrics",
-        "fieldsUi": {
-          "fieldValues": [
-            {"fieldName": "topic", "fieldValue": "={{ $json.topic }}"},
-            {"fieldName": "style", "fieldValue": "={{ $json.style }}"},
-            {"fieldName": "length", "fieldValue": "={{ $json.length }}"},
-            {"fieldName": "quality_score", "fieldValue": "={{ $json.quality_score }}"},
-            {"fieldName": "word_count", "fieldValue": "={{ $json.word_count }}"},
-            {"fieldName": "section_count", "fieldValue": "={{ $json.section_count }}"},
-            {"fieldName": "retry_count", "fieldValue": "={{ $json.retry_count }}"},
-            {"fieldName": "timestamp", "fieldValue": "={{ $json.timestamp }}"}
-          ]
+        "dataTableId": {
+          "__rl": true,
+          "value": "eIziEA1C8zXlc7bK",
+          "mode": "list",
+          "cachedResultName": "blog_quality_metrics"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "topic": "={{ $json.topic }}",
+            "style": "={{ $json.style }}",
+            "length": "={{ $json.length }}",
+            "quality_score": "={{ $json.quality_score }}",
+            "word_count": "={{ $json.word_count }}",
+            "section_count": "={{ $json.section_count }}",
+            "retry_count": "={{ $json.retry_count }}",
+            "timestamp": "={{ $json.timestamp }}"
+          },
+          "matchingColumns": [],
+          "schema": []
         },
         "options": {}
       },
@@ -115,17 +131,26 @@
     {
       "parameters": {
         "operation": "upsert",
-        "table": "blog_topic_performance",
-        "fieldsUi": {
-          "fieldValues": [
-            {"fieldName": "category", "fieldValue": "={{ $json.category }}"},
-            {"fieldName": "quality_score", "fieldValue": "={{ $json.quality_score }}"},
-            {"fieldName": "retry_count", "fieldValue": "={{ $json.retry_count }}"},
-            {"fieldName": "timestamp", "fieldValue": "={{ $json.timestamp }}"}
-          ]
+        "dataTableId": {
+          "__rl": true,
+          "value": "3TNw1XA0UoRLwfJi",
+          "mode": "list",
+          "cachedResultName": "blog_topic_performance"
         },
-        "matchOn": {
-          "values": [{"column": "category", "value": "={{ $json.category }}"}]
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [{ "keyName": "category", "keyValue": "={{ $json.category }}" }]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "category": "={{ $json.category }}",
+            "quality_score": "={{ $json.quality_score }}",
+            "retry_count": "={{ $json.retry_count }}",
+            "timestamp": "={{ $json.timestamp }}"
+          },
+          "matchingColumns": [],
+          "schema": []
         },
         "options": {}
       },
@@ -148,16 +173,25 @@
     {
       "parameters": {
         "operation": "upsert",
-        "table": "blog_source_reliability",
-        "fieldsUi": {
-          "fieldValues": [
-            {"fieldName": "domain", "fieldValue": "={{ $json.domain }}"},
-            {"fieldName": "quality_score", "fieldValue": "={{ $json.quality_score }}"},
-            {"fieldName": "timestamp", "fieldValue": "={{ $json.timestamp }}"}
-          ]
+        "dataTableId": {
+          "__rl": true,
+          "value": "MJX3lsUQ5GQ4xDn7",
+          "mode": "list",
+          "cachedResultName": "blog_source_reliability"
         },
-        "matchOn": {
-          "values": [{"column": "domain", "value": "={{ $json.domain }}"}]
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [{ "keyName": "domain", "keyValue": "={{ $json.domain }}" }]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "domain": "={{ $json.domain }}",
+            "quality_score": "={{ $json.quality_score }}",
+            "timestamp": "={{ $json.timestamp }}"
+          },
+          "matchingColumns": [],
+          "schema": []
         },
         "options": {}
       },
@@ -169,7 +203,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const data = $input.first().json;\nconst markdown = data.finalPost || '';\n\n// Simple but reliable markdown to HTML converter\nfunction markdownToHtml(md) {\n  let html = md;\n  \n  // Code blocks (must be before inline code)\n  html = html.replace(/```([a-z]*)\\n([\\s\\S]*?)```/g, '<pre><code class=\"language-$1\">$2</code></pre>');\n  \n  // Headings\n  html = html.replace(/^#### (.+)$/gm, '<h4>$1</h4>');\n  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');\n  html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');\n  html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');\n  \n  // Bold\n  html = html.replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>');\n  html = html.replace(/__(.+?)__/g, '<strong>$1</strong>');\n  \n  // Italic\n  html = html.replace(/\\*(.+?)\\*/g, '<em>$1</em>');\n  html = html.replace(/_(.+?)_/g, '<em>$1</em>');\n  \n  // Links\n  html = html.replace(/\\[([^\\]]+)\\]\\(([^\\)]+)\\)/g, '<a href=\"$2\" target=\"_blank\" rel=\"noopener noreferrer\">$1</a>');\n  \n  // Inline code\n  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');\n  \n  // Horizontal rules\n  html = html.replace(/^---$/gm, '<hr>');\n  html = html.replace(/^\\*\\*\\*$/gm, '<hr>');\n  \n  // Unordered lists\n  html = html.replace(/^[\\*\\-] (.+)$/gm, '<li>$1</li>');\n  html = html.replace(/(<li>.*<\\/li>)/s, '<ul>$1</ul>');\n  \n  // Blockquotes\n  html = html.replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>');\n  \n  // Tables (basic support)\n  html = html.replace(/\\|(.+)\\|/g, (match) => {\n    const cells = match.split('|').filter(c => c.trim()).map(c => `<td>${c.trim()}</td>`).join('');\n    return `<tr>${cells}</tr>`;\n  });\n  html = html.replace(/(<tr>.*<\\/tr>)/s, '<table>$1</table>');\n  \n  // Paragraphs (wrap text not in tags)\n  const lines = html.split('\\n');\n  const processed = [];\n  let inParagraph = false;\n  \n  for (let line of lines) {\n    line = line.trim();\n    if (!line) {\n      if (inParagraph) {\n        processed.push('</p>');\n        inParagraph = false;\n      }\n      continue;\n    }\n    \n    // Skip if already wrapped in a tag\n    if (line.startsWith('<')) {\n      if (inParagraph) {\n        processed.push('</p>');\n        inParagraph = false;\n      }\n      processed.push(line);\n    } else {\n      if (!inParagraph) {\n        processed.push('<p>');\n        inParagraph = true;\n      }\n      processed.push(line + ' ');\n    }\n  }\n  if (inParagraph) processed.push('</p>');\n  \n  return processed.join('\\n');\n}\n\nconst htmlContent = markdownToHtml(markdown);\n\n// Extract title from HTML content (first h1)\nlet title = 'Untitled Post';\nconst h1Match = htmlContent.match(/<h1>([^<]+)<\\/h1>/);\nif (h1Match) {\n  title = h1Match[1].trim();\n}\n\n// Generate slug from title\nconst slug = title.toLowerCase()\n  .replace(/[^a-z0-9]+/g, '-')\n  .replace(/^-+|-+$/g, '');\n\n// Get today's date in YYYY-MM-DD format\nconst today = new Date().toISOString().split('T')[0];\n\n// Estimate reading time (words per minute = 200)\nconst readingTime = Math.ceil(data.wordCount / 200);\n\n// Generate meta description from first paragraph (150-160 chars for SEO)\nlet metaDescription = '';\nconst firstPMatch = htmlContent.match(/<p>([^<]+)<\\/p>/);\nif (firstPMatch) {\n  const firstParagraph = firstPMatch[1].trim();\n  if (firstParagraph.length <= 160) {\n    metaDescription = firstParagraph;\n  } else {\n    // Truncate to ~155 chars at word boundary\n    metaDescription = firstParagraph.substring(0, 155);\n    const lastSpace = metaDescription.lastIndexOf(' ');\n    if (lastSpace > 130) {\n      metaDescription = metaDescription.substring(0, lastSpace) + '...';\n    } else {\n      metaDescription = metaDescription + '...';\n    }\n  }\n}\n\n// Extract keywords from topic and title (common SEO keywords)\nconst keywords = [];\nconst topicLower = (data.topic || '').toLowerCase();\nconst titleLower = title.toLowerCase();\n\n// Common tech/AI keywords\nconst commonKeywords = [\n  'ai', 'artificial intelligence', 'machine learning', 'ml', 'deep learning',\n  'neural network', 'llm', 'gpt', 'chatbot', 'automation', 'robotics',\n  'data science', 'python', 'javascript', 'typescript', 'react', 'node',\n  'cloud', 'aws', 'azure', 'kubernetes', 'docker', 'api', 'blockchain',\n  'crypto', 'web3', 'devops', 'security', 'privacy', 'quantum', 'startup',\n  'tech', 'software', 'programming', 'developer', 'code', 'open source'\n];\n\n// Extract keywords that appear in topic or title\ncommonKeywords.forEach(kw => {\n  if (topicLower.includes(kw) || titleLower.includes(kw)) {\n    keywords.push(kw);\n  }\n});\n\n// Add current year as keyword\nkeywords.push('2026');\n\n// Limit to top 8-10 keywords\nconst finalKeywords = keywords.slice(0, 10);\n\nconst timestamp = new Date().toISOString();\n\nreturn [{\n  json: {\n    slug: slug,\n    title: title,\n    date: today,\n    excerpt: metaDescription,\n    metaDescription: metaDescription,\n    keywords: finalKeywords,\n    tags: ['AI', 'Machine Learning', '2026'],\n    readingTime: readingTime,\n    content: htmlContent,\n    sources: data.sources || [],\n    editorNotes: {\n      topic: data.topic,\n      style: data.style,\n      length: data.length,\n      wordCount: data.wordCount,\n      sectionCount: data.sectionCount,\n      generatedAt: timestamp\n    }\n  }\n}];"
+        "jsCode": "const data = $input.first().json;\nconst markdown = data.finalPost || '';\n\n// Simple but reliable markdown to HTML converter\nfunction markdownToHtml(md) {\n  let html = md;\n  \n  // Code blocks (must be before inline code)\n  html = html.replace(/```([a-z]*)\\n([\\s\\S]*?)```/g, '<pre><code class=\"language-$1\">$2</code></pre>');\n  \n  // Headings\n  html = html.replace(/^#### (.+)$/gm, '<h4>$1</h4>');\n  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');\n  html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');\n  html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');\n  \n  // Bold\n  html = html.replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>');\n  html = html.replace(/__(.+?)__/g, '<strong>$1</strong>');\n  \n  // Italic\n  html = html.replace(/\\*(.+?)\\*/g, '<em>$1</em>');\n  html = html.replace(/_(.+?)_/g, '<em>$1</em>');\n  \n  // Links\n  html = html.replace(/\\[([^\\]]+)\\]\\(([^\\)]+)\\)/g, '<a href=\"$2\" target=\"_blank\" rel=\"noopener noreferrer\">$1</a>');\n  \n  // Inline code\n  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');\n  \n  // Horizontal rules\n  html = html.replace(/^---$/gm, '<hr>');\n  html = html.replace(/^\\*\\*\\*$/gm, '<hr>');\n  \n  // Unordered lists\n  html = html.replace(/^[\\*\\-] (.+)$/gm, '<li>$1</li>');\n  html = html.replace(/(<li>.*<\\/li>)/s, '<ul>$1</ul>');\n  \n  // Blockquotes\n  html = html.replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>');\n  \n  // Tables (basic support)\n  html = html.replace(/\\|(.+)\\|/g, (match) => {\n    const cells = match.split('|').filter(c => c.trim()).map(c => `<td>${c.trim()}</td>`).join('');\n    return `<tr>${cells}</tr>`;\n  });\n  html = html.replace(/(<tr>.*<\\/tr>)/s, '<table>$1</table>');\n  \n  // Paragraphs (wrap text not in tags)\n  const lines = html.split('\\n');\n  const processed = [];\n  let inParagraph = false;\n  \n  for (let line of lines) {\n    line = line.trim();\n    if (!line) {\n      if (inParagraph) {\n        processed.push('</p>');\n        inParagraph = false;\n      }\n      continue;\n    }\n    \n    // Skip if already wrapped in a tag\n    if (line.startsWith('<')) {\n      if (inParagraph) {\n        processed.push('</p>');\n        inParagraph = false;\n      }\n      processed.push(line);\n    } else {\n      if (!inParagraph) {\n        processed.push('<p>');\n        inParagraph = true;\n      }\n      processed.push(line + ' ');\n    }\n  }\n  if (inParagraph) processed.push('</p>');\n  \n  return processed.join('\\n');\n}\n\nconst htmlContent = markdownToHtml(markdown);\n\n// Extract title from HTML content (first h1)\nlet title = 'Untitled Post';\nconst h1Match = htmlContent.match(/<h1>([^<]+)<\\/h1>/);\nif (h1Match) {\n  title = h1Match[1].trim();\n}\n\n// Generate slug from title\nconst slug = title.toLowerCase()\n  .replace(/[^a-z0-9]+/g, '-')\n  .replace(/^-+|-+$/g, '');\n\n// Get today's date in YYYY-MM-DD format\nconst today = new Date().toISOString().split('T')[0];\n\n// Estimate reading time (words per minute = 200)\nconst readingTime = Math.ceil(data.wordCount / 200);\n\n// Generate meta description from first paragraph (150-160 chars for SEO)\nlet metaDescription = '';\nconst firstPMatch = htmlContent.match(/<p>([^<]+)<\\/p>/);\nif (firstPMatch) {\n  const firstParagraph = firstPMatch[1].trim();\n  if (firstParagraph.length <= 160) {\n    metaDescription = firstParagraph;\n  } else {\n    // Truncate to ~155 chars at word boundary\n    metaDescription = firstParagraph.substring(0, 155);\n    const lastSpace = metaDescription.lastIndexOf(' ');\n    if (lastSpace > 130) {\n      metaDescription = metaDescription.substring(0, lastSpace) + '...';\n    } else {\n      metaDescription = metaDescription + '...';\n    }\n  }\n}\n\n// Extract keywords from topic and title (common SEO keywords)\nconst keywords = [];\nconst topicLower = (data.topic || '').toLowerCase();\nconst titleLower = title.toLowerCase();\n\n// Common tech/AI keywords\nconst commonKeywords = [\n  'ai', 'artificial intelligence', 'machine learning', 'ml', 'deep learning',\n  'neural network', 'llm', 'gpt', 'chatbot', 'automation', 'robotics',\n  'data science', 'python', 'javascript', 'typescript', 'react', 'node',\n  'cloud', 'aws', 'azure', 'kubernetes', 'docker', 'api', 'blockchain',\n  'crypto', 'web3', 'devops', 'security', 'privacy', 'quantum', 'startup',\n  'tech', 'software', 'programming', 'developer', 'code', 'open source'\n];\n\n// Extract keywords that appear in topic or title\ncommonKeywords.forEach(kw => {\n  if (topicLower.includes(kw) || titleLower.includes(kw)) {\n    keywords.push(kw);\n  }\n});\n\n// Add current year as keyword\nkeywords.push('2026');\n\n// Limit to top 8-10 keywords\nconst finalKeywords = keywords.slice(0, 10);\n\nconst timestamp = new Date().toISOString();\n\nreturn [{\n  json: {\n    slug: slug,\n    title: title,\n    date: today,\n    excerpt: metaDescription,\n    metaDescription: metaDescription,\n    keywords: finalKeywords,\n    tags: ['AI', 'Machine Learning', '2026'],\n    readingTime: readingTime,\n    content: htmlContent,\n    sources: data.sources || [],\n    wordCount: data.wordCount,\n    qualityScore: data.quality_score,\n    editorNotes: {\n      topic: data.topic,\n      style: data.style,\n      length: data.length,\n      wordCount: data.wordCount,\n      sectionCount: data.sectionCount,\n      generatedAt: timestamp\n    }\n  }\n}];"
       },
       "id": "convert-and-prep",
       "name": "Convert MD to HTML & Prep Payload",
@@ -207,7 +241,37 @@
     },
     {
       "parameters": {
-        "jsCode": "const input = $input.first().json;\n\nconst allInputs = $input.all();\nconst finalPost = input.finalPost || '';\nconst wordCount = finalPost.split(/\\s+/).length;\nconst hasTitle = /^#\\s+/.test(finalPost);\nconst sectionCount = (finalPost.match(/^##\\s+/gm) || []).length;\n\nconst preview = finalPost.length > 200 ? finalPost.substring(0, 200) + '...' : finalPost;\n\nconsole.log('========================================');\nconsole.log('PHASE 5 COMPLETE!');\nconsole.log('Items received:', allInputs.length);\nconsole.log('Word count:', wordCount);\nconsole.log('Has title:', hasTitle);\nconsole.log('Section count:', sectionCount);\nconsole.log('Preview:', preview);\nconsole.log('Test PASSED:', allInputs.length === 1 && wordCount >= 500);\nconsole.log('Data Tables: Written to quality_metrics, topic_performance, source_reliability');\nconsole.log('Blog API: Published to blog');\nconsole.log('========================================');\n\nreturn [{\n  json: {\n    success: true,\n    phase: 'PHASE 5 - With Blog API Publishing',\n    itemsReceived: allInputs.length,\n    expectedItems: 1,\n    hasFinalPost: !!input.finalPost,\n    finalPostLength: finalPost.length,\n    wordCount: wordCount,\n    hasTitle: hasTitle,\n    sectionCount: sectionCount,\n    passed: allInputs.length === 1 && wordCount >= 500,\n    topic: input.topic\n  }\n}];"
+        "jsCode": "// Get post data from the prep node, not the API response\nconst postData = $(\"Convert MD to HTML & Prep Payload\").first().json;\n\n// Hardcoded notification chat ID\nconst NOTIFICATION_CHAT_ID = '551663660';\n\nconst title = postData.title || 'Untitled Post';\nconst slug = postData.slug || '';\nconst metaDescription = postData.metaDescription || postData.excerpt || '';\nconst wordCount = postData.wordCount || 0;\nconst qualityScore = postData.qualityScore || 0;\nconst readingTime = postData.readingTime || 0;\n\nconst message = `📝 *NEW POST PUBLISHED*\\n\\n*Title:* ${title}\\n\\n*Excerpt:* ${metaDescription.substring(0, 150)}${metaDescription.length > 150 ? '...' : ''}\\n\\n*Stats:*\\n• Words: ${wordCount}\\n• Quality: ${qualityScore}/10\\n• Reading time: ${readingTime} min\\n\\n🔗 https://mabus.ai/blog/${slug}`;\n\nconsole.log('📱 Agent 5: Sending Telegram notification for:', title);\n\nreturn [{\n  json: {\n    chatId: NOTIFICATION_CHAT_ID,\n    message: message,\n    title: title,\n    slug: slug\n  }\n}];"
+      },
+      "id": "build-notification",
+      "name": "Build Notification Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 700]
+    },
+    {
+      "parameters": {
+        "chatId": "551663660",
+        "text": "={{ $json.message }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send-telegram-notification",
+      "name": "Send Telegram Notification",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1780, 700],
+      "credentials": {
+        "telegramApi": {
+          "id": "vAkTh1jTXot7OPxa",
+          "name": "Blog API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nconst allInputs = $input.all();\nconst finalPost = input.finalPost || '';\nconst wordCount = finalPost.split(/\\s+/).length;\nconst hasTitle = /^#\\s+/.test(finalPost);\nconst sectionCount = (finalPost.match(/^##\\s+/gm) || []).length;\n\nconst preview = finalPost.length > 200 ? finalPost.substring(0, 200) + '...' : finalPost;\n\nconsole.log('========================================');\nconsole.log('PHASE 5 COMPLETE!');\nconsole.log('Items received:', allInputs.length);\nconsole.log('Word count:', wordCount);\nconsole.log('Has title:', hasTitle);\nconsole.log('Section count:', sectionCount);\nconsole.log('Preview:', preview);\nconsole.log('Test PASSED:', allInputs.length === 1 && wordCount >= 500);\nconsole.log('Data Tables: Written to quality_metrics, topic_performance, source_reliability');\nconsole.log('Blog API: Published to blog');\nconsole.log('Telegram: Notification sent');\nconsole.log('========================================');\n\nreturn [{\n  json: {\n    success: true,\n    phase: 'PHASE 5 - With Blog API Publishing & Telegram Notification',\n    itemsReceived: allInputs.length,\n    expectedItems: 1,\n    hasFinalPost: !!input.finalPost,\n    finalPostLength: finalPost.length,\n    wordCount: wordCount,\n    hasTitle: hasTitle,\n    sectionCount: sectionCount,\n    passed: allInputs.length === 1 && wordCount >= 500,\n    topic: input.topic\n  }\n}];"
       },
       "id": "log-result",
       "name": "Log Result",
@@ -218,49 +282,55 @@
   ],
   "connections": {
     "Webhook Trigger": {
-      "main": [[{"node": "Parse Input"}]]
+      "main": [[{"node": "Parse Input", "type": "main", "index": 0}]]
     },
     "Parse Input": {
-      "main": [[{"node": "Validate Quality"}]]
+      "main": [[{"node": "Validate Quality", "type": "main", "index": 0}]]
     },
     "Validate Quality": {
       "main": [[
-        {"node": "Prep Validation Failures"},
-        {"node": "Prep Quality Metrics"},
-        {"node": "Prep Topic Performance"},
-        {"node": "Prep Source Reliability"},
-        {"node": "Convert MD to HTML & Prep Payload"},
-        {"node": "Log Result"}
+        {"node": "Prep Validation Failures", "type": "main", "index": 0},
+        {"node": "Prep Quality Metrics", "type": "main", "index": 0},
+        {"node": "Prep Topic Performance", "type": "main", "index": 0},
+        {"node": "Prep Source Reliability", "type": "main", "index": 0},
+        {"node": "Convert MD to HTML & Prep Payload", "type": "main", "index": 0},
+        {"node": "Log Result", "type": "main", "index": 0}
       ]]
     },
     "Prep Validation Failures": {
-      "main": [[{"node": "Insert Validation Failures"}]]
+      "main": [[{"node": "Insert Validation Failures", "type": "main", "index": 0}]]
     },
     "Insert Validation Failures": {
       "main": [[]]
     },
     "Prep Quality Metrics": {
-      "main": [[{"node": "Insert Quality Metrics"}]]
+      "main": [[{"node": "Insert Quality Metrics", "type": "main", "index": 0}]]
     },
     "Insert Quality Metrics": {
       "main": [[]]
     },
     "Prep Topic Performance": {
-      "main": [[{"node": "Upsert Topic Performance"}]]
+      "main": [[{"node": "Upsert Topic Performance", "type": "main", "index": 0}]]
     },
     "Upsert Topic Performance": {
       "main": [[]]
     },
     "Prep Source Reliability": {
-      "main": [[{"node": "Upsert Source Reliability"}]]
+      "main": [[{"node": "Upsert Source Reliability", "type": "main", "index": 0}]]
     },
     "Upsert Source Reliability": {
       "main": [[]]
     },
     "Convert MD to HTML & Prep Payload": {
-      "main": [[{"node": "Publish to Blog API"}]]
+      "main": [[{"node": "Publish to Blog API", "type": "main", "index": 0}]]
     },
     "Publish to Blog API": {
+      "main": [[{"node": "Build Notification Message", "type": "main", "index": 0}]]
+    },
+    "Build Notification Message": {
+      "main": [[{"node": "Send Telegram Notification", "type": "main", "index": 0}]]
+    },
+    "Send Telegram Notification": {
       "main": [[]]
     },
     "Log Result": {

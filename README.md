@@ -2,21 +2,6 @@
 
 A fully automated, 5-agent system that discovers trending topics, researches them, writes long-form blog posts, edits for quality, and publishes to your blog with intelligent learning capabilities.
 
-## Requirements
-
-Before you begin, you'll need:
-
-1. **n8n instance** - Self-hosted or cloud n8n installation
-2. **Local LLM via Ollama** - The system uses Ollama to run a local language model for content generation. You'll need:
-   - Ollama installed and running on your network
-   - A capable model (the workflows use `gpt-oss:20b` but you can substitute any model)
-   - **Note: The Ollama endpoint is hardcoded in the workflows as `http://192.168.6.56:11434` - you must update this to your Ollama instance URL**
-3. **Blog website with API** - A blog that accepts posts via REST API with Bearer token authentication. The workflows expect:
-   - POST endpoint for creating posts (receives: slug, title, date, content, metaDescription, keywords, readingTime)
-   - GET endpoint for fetching recent posts (returns array of posts with title and slug fields for duplicate detection)
-   - **Note: The blog API URL is hardcoded as `https://mabus.ai/api/blog/posts` - you must update this to your blog's API**
-4. **SerpApi account** - For web research (free tier available at serpapi.com)
-
 ## 🚀 System Overview
 
 This system runs completely autonomously:
@@ -120,23 +105,10 @@ Agent 5: Publishing (Webhook: /webhook/agent-5-publishing)
 
 ### Prerequisites
 
-- **n8n instance** running (self-hosted or cloud)
-- **Ollama** running on your network with a capable LLM loaded
-- **SerpApi account** with API key (get one at serpapi.com)
-- **Blog with REST API** that supports Bearer token authentication
-
-### Hardcoded Values You Must Change
-
-The following values are hardcoded in the workflow JSON files and **must be updated** before use:
-
-| Value | Current | Update To | Found In |
-|-------|---------|-----------|----------|
-| Ollama endpoint | `http://192.168.6.56:11434` | Your Ollama URL | Agent 3, Agent 4 |
-| Ollama model | `gpt-oss:20b` | Your model name | Agent 3, Agent 4 |
-| Blog API URL | `https://mabus.ai/api/blog/posts` | Your blog API | Agent 1, Agent 5 |
-| n8n webhook base | `https://n8n.mabus.ai` | Your n8n URL | Agent 1, 2, 3, 4 |
-
-You can find and replace these using your text editor before importing, or update them in the n8n UI after import.
+- **n8n instance** running (e.g., https://n8n.mabus.ai)
+- **Ollama** running at `http://192.168.6.56:11434` with model `gpt-oss:20b`
+- **SerpApi account** with API key
+- **Blog API** at `https://mabus.ai/api/blog/posts` with Bearer token authentication
 
 ### Step 1: Create Data Tables (MANUAL)
 
@@ -284,11 +256,10 @@ This node checks if the post failed validation and should retry:
    Authorization: Bearer {{ $env.BLOG_API_KEY }}
    ```
 
-#### Ollama (Agent 3 & 4)
-- **You must update the Ollama endpoint URL** - it's hardcoded as `http://192.168.6.56:11434`
-- Find all HTTP Request nodes that call Ollama and update to your instance
-- Model: Change `gpt-oss:20b` to your preferred model (e.g., `llama3:70b`, `mixtral:8x7b`, etc.)
-- Recommended: Use a model with good long-form writing capabilities
+#### Ollama (All Agents)
+- Verify all Ollama HTTP Request nodes point to: `http://192.168.6.56:11434`
+- Model: `gpt-oss:20b`
+- If your Ollama is at a different URL, update all nodes
 
 ### Step 6: Configure Webhook URLs
 
