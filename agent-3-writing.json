@@ -1,0 +1,178 @@
+{
+  "name": "PHASE 5: Agent 3 (With Data Tables)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "phase5-agent-3",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 400],
+      "webhookId": "phase5-agent-3"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst data = input.body || input;\n\nconst allInputs = $input.all();\nconsole.log('✅ Agent 3: Received', allInputs.length, 'item(s)');\n\nif (allInputs.length !== 1) {\n  console.error('⚠️ AGENT 3 ERROR: Expected 1 item, got', allInputs.length);\n}\n\nreturn [{\n  json: {\n    researchSummary: data.researchSummary,\n    sources: data.sources || [],\n    topic: data.topic,\n    style: data.style,\n    length: data.length,\n    angle: data.angle,\n    retryCount: 0\n  }\n}];"
+      },
+      "id": "parse-input",
+      "name": "Parse Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "table": "blog_validation_failures",
+        "options": {
+          "limit": 100,
+          "sort": {
+            "sortFields": [{"fieldName": "createdAt", "order": "DESC"}]
+          }
+        }
+      },
+      "id": "get-failures",
+      "name": "Get Validation Failures",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "table": "blog_quality_metrics",
+        "options": {
+          "limit": 100,
+          "sort": {
+            "sortFields": [{"fieldName": "createdAt", "order": "DESC"}]
+          }
+        }
+      },
+      "id": "get-metrics",
+      "name": "Get Quality Metrics",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "table": "blog_retry_patterns",
+        "options": {
+          "limit": 100,
+          "sort": {
+            "sortFields": [{"fieldName": "createdAt", "order": "DESC"}]
+          }
+        }
+      },
+      "id": "get-retries",
+      "name": "Get Retry Patterns",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [680, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Wait 2 seconds to give Data Tables time to execute in parallel\n// This ensures they're available when Build Writing Prompt references them\nawait new Promise(resolve => setTimeout(resolve, 2000));\n\nconst parseInputData = $input.first().json;\n\nconsole.log('✅ Agent 3: Waited for Data Tables, continuing to Build Writing Prompt');\n\nreturn [{\n  json: parseInputData\n}];"
+      },
+      "id": "wait-for-tables",
+      "name": "Wait for Data Tables",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get the original Parse Input data (not the Data Table data from previous node)\nconst data = $(\"Parse Input\").first().json;\n\nconsole.log('📝 Agent 3: Build Writing Prompt - Topic:', data.topic);\n\n// Fetch Data Tables directly using node references (with error handling for empty tables)\nlet failures = [];\nlet metrics = [];\nlet retries = [];\n\ntry {\n  failures = $(\"Get Validation Failures\").all();\n} catch (e) {\n  console.log('⚠️ Agent 3: Validation Failures table empty or not executed');\n}\n\ntry {\n  metrics = $(\"Get Quality Metrics\").all();\n} catch (e) {\n  console.log('⚠️ Agent 3: Quality Metrics table empty or not executed');\n}\n\ntry {\n  retries = $(\"Get Retry Patterns\").all();\n} catch (e) {\n  console.log('⚠️ Agent 3: Retry Patterns table empty or not executed');\n}\n\nconsole.log('📊 Agent 3: Loaded', failures.length, 'failures,', metrics.length, 'metrics,', retries.length, 'retry patterns');\n\n// Analyze learnings from Data Tables\nconst commonIssues = {};\nfailures.forEach(item => {\n  const issue = item.json.issue_type || 'unknown';\n  commonIssues[issue] = (commonIssues[issue] || 0) + 1;\n});\n\nconst avgWordCount = metrics.length > 0 \n  ? Math.round(metrics.reduce((sum, item) => sum + (item.json.word_count || 0), 0) / metrics.length)\n  : 0;\n\nconst avgSectionCount = metrics.length > 0\n  ? Math.round(metrics.reduce((sum, item) => sum + (item.json.section_count || 0), 0) / metrics.length)\n  : 0;\n\nconst avgQualityScore = metrics.length > 0\n  ? (metrics.reduce((sum, item) => sum + (item.json.quality_score || 0), 0) / metrics.length).toFixed(1)\n  : 0;\n\nlet learnings = '';\n\nif (Object.keys(commonIssues).length > 0) {\n  const topIssues = Object.entries(commonIssues)\n    .sort((a, b) => b[1] - a[1])\n    .slice(0, 3)\n    .map(([issue, count]) => `- ${issue} (${count} occurrences)`);\n  learnings += `\\n\\nCOMMON ISSUES TO AVOID:\\n${topIssues.join('\\n')}`;\n}\n\nif (metrics.length > 0) {\n  learnings += `\\n\\nQUALITY BENCHMARKS (based on ${metrics.length} previous posts):\\n`;\n  learnings += `- Average word count: ${avgWordCount} words\\n`;\n  learnings += `- Average sections: ${avgSectionCount}\\n`;\n  learnings += `- Average quality score: ${avgQualityScore}/10`;\n}\n\nconst sources = Array.isArray(data.sources) ? data.sources : [];\nconst sourcesText = sources.map((s, i) => `[${i+1}] ${s.title} - ${s.url}`).join('\\n') || 'No sources';\n\nconst prompt = `You are a tech journalist writing an in-depth news analysis blog post. Write ABOUT the following topic from a third-person, objective perspective.\n\nTOPIC: ${data.topic}\nSTYLE: ${data.style}\nLENGTH: LONG-FORM (aim for 2500-5000 words - this is critical!)\n\nRESEARCH:\n${data.researchSummary}\n\nSOURCES:\n${sourcesText}${learnings}\n\nCRITICAL INSTRUCTIONS:\n- Write in THIRD PERSON (use \"they\", \"the author\", \"the developer\", NOT \"I\" or \"we\")\n- Be a JOURNALIST reporting on the news, not the person in the story\n- Analyze and explain the topic objectively\n- If discussing someone work or opinion, refer to them by name or title\n- Cite sources naturally in the text\n- WRITE A COMPREHENSIVE DETAILED POST - aim for 2500-5000 words\n- Expand on each section with multiple paragraphs, examples, and analysis\n- Pay special attention to avoiding the common issues listed above\n- Aim to meet or exceed the quality benchmarks shown above\n\nWrite a COMPLETE LONG-FORM blog post with:\n- Title (MUST be first line) - make it newsworthy, not first-person\n- Introduction (3-4 paragraphs) - set context and summarize what happened\n- 6-10 main sections with headings - deeply analyze different aspects\n- Each section should have 3-5 paragraphs with detailed analysis\n- Include subsections where appropriate for complex topics\n- Conclusion (3-4 paragraphs) - implications, future outlook, and takeaways\n\nOutput ONLY the markdown blog post, starting with title.`;\n\n// CRITICAL: Only return ONE item to prevent duplication\nreturn [{\n  json: {\n    model: 'gpt-oss:20b',\n    prompt: prompt,\n    stream: false,\n    options: { temperature: 0.7 },\n    sources: sources,\n    topic: data.topic,\n    style: data.style,\n    length: data.length\n  }\n}];"
+      },
+      "id": "build-prompt",
+      "name": "Build Writing Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://192.168.6.56:11434/api/generate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  model: $json.model,\n  prompt: $json.prompt,\n  stream: $json.stream,\n  options: $json.options\n} }}",
+        "options": {"timeout": 600000}
+      },
+      "id": "write-post",
+      "name": "Write Blog Post",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const allInputs = $input.all();\nconst ollamaResponse = $input.first().json;\nconst prepData = $(\"Build Writing Prompt\").first().json;\n\nconsole.log('⚠️ Agent 3: Parse Blog Output received', allInputs.length, 'item(s)');\n\nif (allInputs.length !== 1) {\n  console.error('❌ DUPLICATION BUG: Expected 1 blog post, got', allInputs.length);\n  console.error('This means the blog was generated multiple times!');\n}\n\nlet blogContent = ollamaResponse.response || '';\n\nconst wordCount = blogContent.split(/\\s+/).length;\nconsole.log('✅ Agent 3: Generated', wordCount, 'words');\n\n// CRITICAL: Only return the FIRST item to prevent duplication\nreturn [{\n  json: {\n    blogContent: blogContent,\n    topic: prepData.topic,\n    style: prepData.style,\n    length: prepData.length,\n    sources: prepData.sources\n  }\n}];"
+      },
+      "id": "parse-blog",
+      "name": "Parse Blog Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://n8n.mabus.ai/webhook/phase5-agent-4",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {"timeout": 30000}
+      },
+      "id": "call-agent-4",
+      "name": "Call Agent 4",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1780, 400]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [[{"node": "Parse Input"}]]
+    },
+    "Parse Input": {
+      "main": [[{"node": "Wait for Data Tables"}]]
+    },
+    "Wait for Data Tables": {
+      "main": [[
+        {"node": "Get Validation Failures"},
+        {"node": "Get Quality Metrics"},
+        {"node": "Get Retry Patterns"},
+        {"node": "Build Writing Prompt"}
+      ]]
+    },
+    "Get Validation Failures": {
+      "main": [[]]
+    },
+    "Get Quality Metrics": {
+      "main": [[]]
+    },
+    "Get Retry Patterns": {
+      "main": [[]]
+    },
+    "Build Writing Prompt": {
+      "main": [[{"node": "Write Blog Post"}]]
+    },
+    "Write Blog Post": {
+      "main": [[{"node": "Parse Blog Output"}]]
+    },
+    "Parse Blog Output": {
+      "main": [[{"node": "Call Agent 4"}]]
+    },
+    "Call Agent 4": {
+      "main": [[]]
+    }
+  },
+  "pinData": {}
+}

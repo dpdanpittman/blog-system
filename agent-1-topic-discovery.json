@@ -1,0 +1,145 @@
+{
+  "name": "PHASE 5: Agent 1 (Automated Topic Discovery)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{}]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 400]
+    },
+    {
+      "parameters": {
+        "url": "https://hacker-news.firebaseio.com/v0/topstories.json",
+        "options": {"timeout": 10000}
+      },
+      "id": "fetch-top-stories",
+      "name": "Fetch HackerNews Top Stories",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n splits the array into individual items\n// So we need to collect all items and extract their values\nconst allItems = $input.all();\nconsole.log('✅ Received', allItems.length, 'story IDs from HackerNews');\n\n// Extract the ID from each item (each item.json is a single number)\nconst allStoryIds = allItems.map(item => item.json);\n\n// Take first 30 for better variety (to avoid duplicates)\nconst topIds = allStoryIds.slice(0, 30);\nconsole.log('✅ Selected top 30 IDs:', topIds);\n\n// Return each as a separate item with storyId property\nreturn topIds.map(id => ({\n  json: {\n    storyId: id\n  }\n}));"
+      },
+      "id": "split-ids",
+      "name": "Split Story IDs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "url": "=https://hacker-news.firebaseio.com/v0/item/{{ $json.storyId }}.json",
+        "options": {"timeout": 10000}
+      },
+      "id": "fetch-story-details",
+      "name": "Fetch Story Details",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const stories = $input.all();\n\n// Filter for AI/ML/tech related stories (broadened to catch more variety)\nconst keywords = ['ai', 'ml', 'machine learning', 'artificial intelligence', 'llm', 'gpt', 'model', 'neural', 'deep learning', 'data science', 'automation', 'robotics', 'quantum', 'tech', 'software', 'programming', 'algorithm', 'computing', 'developer', 'api', 'open source', 'security', 'privacy', 'crypto', 'blockchain', 'startup', 'cloud', 'database', 'web', 'mobile', 'app', 'code', 'language', 'framework', 'tool', 'platform'];\n\n// Skip URLs we don't want (GitHub repos, show HN, etc)\nconst skipDomains = ['github.com', 'gitlab.com'];\nconst skipPrefixes = ['Show HN:', 'Ask HN:', 'Tell HN:'];\n\nconst relevantStories = stories.filter(item => {\n  const story = item.json;\n  if (!story || !story.title) return false;\n  \n  const title = story.title;\n  const url = story.url || '';\n  \n  // Skip show/ask/tell HN posts\n  if (skipPrefixes.some(prefix => title.startsWith(prefix))) {\n    return false;\n  }\n  \n  // Skip GitHub/GitLab repos (prefer articles)\n  if (skipDomains.some(domain => url.includes(domain))) {\n    return false;\n  }\n  \n  // Check for AI/tech keywords\n  const titleLower = title.toLowerCase();\n  return keywords.some(kw => titleLower.includes(kw));\n});\n\nconsole.log('✅ Agent 1: Found', relevantStories.length, 'relevant stories (filtered from', stories.length, 'total)');\n\nif (relevantStories.length === 0) {\n  console.log('⚠️ No relevant stories found, using first story as fallback');\n  // Return in same format as relevant stories\n  return [{\n    json: {\n      relevantStories: stories.length > 0 ? [stories[0].json] : []\n    }\n  }];\n}\n\n// Store ALL relevant stories for duplicate detection\n// Return a single item with all stories as an array\nconsole.log('✅ Returning', relevantStories.length, 'relevant stories for duplicate check');\nreturn [{\n  json: {\n    relevantStories: relevantStories.map(item => item.json)\n  }\n}];"
+      },
+      "id": "filter-relevant",
+      "name": "Filter for AI/Tech Topics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://mabus.ai/api/blog/posts?limit=30",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.BLOG_API_KEY }}"
+            }
+          ]
+        },
+        "options": {"timeout": 10000}
+      },
+      "id": "fetch-recent-posts",
+      "name": "Fetch Recent Posts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const relevantStoriesData = $(\"Filter for AI/Tech Topics\").first().json;\nconst relevantStories = relevantStoriesData.relevantStories || [];\n\nconst recentPostsResponse = $input.first().json;\n// Try different response formats\nlet recentPosts = [];\nif (recentPostsResponse.posts) {\n  recentPosts = recentPostsResponse.posts;\n  console.log('📡 Agent 1: Blog API returned {posts: [...]} format');\n} else if (Array.isArray(recentPostsResponse)) {\n  recentPosts = recentPostsResponse;\n  console.log('📡 Agent 1: Blog API returned direct array format');\n} else {\n  console.log('⚠️ Agent 1: Unknown Blog API response format:', typeof recentPostsResponse);\n  recentPosts = [];\n}\n\nconsole.log('🔍 Agent 1: relevantStories:', relevantStories.length);\nconsole.log('🔍 Agent 1: recentPosts:', recentPosts.length);\n\nif (relevantStories.length === 0) {\n  throw new Error('No relevant stories found from HackerNews');\n}\n\n// Enhanced duplicate detection with two checks:\n// 1. Word overlap (handles general similarity)\n// 2. Key entity overlap (catches same topic with different wording)\nfunction checkDuplicate(storyTitle, postTitle) {\n  // Split on non-alphanumeric to handle punctuation\n  const storyWords = storyTitle.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 3);\n  const postWords = postTitle.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 3);\n\n  // Check 1: Overall word overlap (40% threshold)\n  const wordMatches = storyWords.filter(w => postWords.includes(w)).length;\n  const wordOverlap = wordMatches / Math.min(storyWords.length, postWords.length);\n  const isDuplicateByWords = wordOverlap > 0.4;\n\n  // Check 2: Key entity overlap (2+ significant shared words = same topic)\n  // Extract words >5 chars or starting with capital (proper nouns, technical terms)\n  const storyKeyWords = storyTitle.split(/[^a-zA-Z0-9]+/).filter(w =>\n    w.length > 5 || /^[A-Z]/.test(w)\n  ).map(w => w.toLowerCase());\n  const postKeyWords = postTitle.split(/[^a-zA-Z0-9]+/).filter(w =>\n    w.length > 5 || /^[A-Z]/.test(w)\n  ).map(w => w.toLowerCase());\n\n  const keyMatches = storyKeyWords.filter(w => postKeyWords.includes(w));\n  const isDuplicateByKeys = keyMatches.length >= 2;\n\n  console.log('  🔍 Comparing:', storyTitle.substring(0, 60));\n  console.log('           vs:', postTitle.substring(0, 60));\n  console.log('  📊 Word overlap:', wordMatches, '/', Math.min(storyWords.length, postWords.length), '=', (wordOverlap * 100).toFixed(1) + '%', isDuplicateByWords ? '❌' : '✅');\n  console.log('  🔑 Key entities:', keyMatches.length, 'shared -', keyMatches.slice(0, 3).join(', '), isDuplicateByKeys ? '❌' : '✅');\n\n  // Duplicate if EITHER check passes\n  const isDuplicate = isDuplicateByWords || isDuplicateByKeys;\n  console.log('  🎯 Result:', isDuplicate ? '❌ DUPLICATE' : '✅ unique');\n\n  return isDuplicate;\n}\n\n// Find first non-duplicate story\nlet selectedStory = null;\nlet selectedIndex = -1;\n\nfor (let i = 0; i < relevantStories.length; i++) {\n  const story = relevantStories[i];\n  console.log('\\n🔎 Checking story #' + (i + 1) + ':', story.title);\n  \n  const isDuplicate = recentPosts.length > 0 && recentPosts.some(post => \n    checkDuplicate(story.title || '', post.title || '')\n  );\n  \n  if (!isDuplicate) {\n    selectedStory = story;\n    selectedIndex = i;\n    console.log('✅ Agent 1: Selected story #' + (i + 1) + ':', story.title);\n    break;\n  } else {\n    console.log('⏭️ Agent 1: Story #' + (i + 1) + ' is duplicate, skipping');\n  }\n}\n\n// Stop workflow if all stories are duplicates\nif (!selectedStory) {\n  console.log('\\n🛑 Agent 1: All', relevantStories.length, 'stories are duplicates of recent posts');\n  console.log('🛑 Stopping workflow to prevent duplicate content');\n  throw new Error('All ' + relevantStories.length + ' relevant stories are duplicates of recent blog posts. Skipping to avoid republishing same content.');\n}\n\nreturn [{\n  json: {\n    selectedStory: selectedStory,\n    selectedIndex: selectedIndex,\n    totalRelevantStories: relevantStories.length,\n    recentPostsCount: recentPosts.length\n  }\n}];"
+      },
+      "id": "check-duplicates",
+      "name": "Check for Duplicates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst story = data.selectedStory;\n\nconst topic = story.title || 'AI and Technology Trends';\nconst url = story.url || '';\n\nconsole.log('✅ Agent 1: Final selection - Story #' + (data.selectedIndex + 1) + ' of ' + data.totalRelevantStories);\nconsole.log('✅ Agent 1: Topic:', topic);\nconsole.log('✅ Agent 1: URL:', url);\n\nconst timestamp = new Date().toISOString();\n\nreturn [{\n  json: {\n    topic: topic,\n    url: url,\n    style: 'accessible-explanation',\n    length: 'short',\n    angle: 'general overview',\n    timestamp: timestamp,\n    phase: 'PHASE 5 - Automated Topic Discovery with Duplicate Detection',\n    sourceStoryId: story.id,\n    sourceScore: story.score,\n    selectedIndex: data.selectedIndex,\n    totalRelevantStories: data.totalRelevantStories,\n    recentPostsChecked: data.recentPostsCount\n  }\n}];"
+      },
+      "id": "format-topic",
+      "name": "Format Topic Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://n8n.mabus.ai/webhook/phase5-agent-2",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {"timeout": 30000}
+      },
+      "id": "call-agent-2",
+      "name": "Call Agent 2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2000, 400]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{"node": "Fetch HackerNews Top Stories"}]]
+    },
+    "Fetch HackerNews Top Stories": {
+      "main": [[{"node": "Split Story IDs"}]]
+    },
+    "Split Story IDs": {
+      "main": [[{"node": "Fetch Story Details"}]]
+    },
+    "Fetch Story Details": {
+      "main": [[{"node": "Filter for AI/Tech Topics"}]]
+    },
+    "Filter for AI/Tech Topics": {
+      "main": [[{"node": "Fetch Recent Posts"}]]
+    },
+    "Fetch Recent Posts": {
+      "main": [[{"node": "Check for Duplicates"}]]
+    },
+    "Check for Duplicates": {
+      "main": [[{"node": "Format Topic Data"}]]
+    },
+    "Format Topic Data": {
+      "main": [[{"node": "Call Agent 2"}]]
+    },
+    "Call Agent 2": {
+      "main": [[]]
+    }
+  },
+  "pinData": {}
+}

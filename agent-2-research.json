@@ -1,0 +1,85 @@
+{
+  "name": "PHASE 5: Agent 2 (With Search)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "phase5-agent-2",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 400],
+      "webhookId": "phase5-agent-2"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst data = input.body || input;\n\nconst allInputs = $input.all();\nconsole.log('✅ Agent 2: Received', allInputs.length, 'item(s)');\n\nif (allInputs.length !== 1) {\n  console.error('⚠️ AGENT 2 ERROR: Expected 1 item, got', allInputs.length);\n}\n\nconst searchQuery = data.topic || 'AI trends';\n\nreturn [{\n  json: {\n    topic: data.topic,\n    url: data.url || '',\n    style: data.style,\n    length: data.length,\n    angle: data.angle,\n    searchQuery: searchQuery\n  }\n}];"
+      },
+      "id": "parse-input",
+      "name": "Parse Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "url": "=https://serpapi.com/search?engine=google&q={{ encodeURIComponent($json.searchQuery) }}&api_key={{ $credentials.serpApi.apiKey }}&num=5",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "serpApi",
+        "options": {"timeout": 30000}
+      },
+      "id": "search",
+      "name": "SerpApi Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputData = $input.first().json;\nconst serpResults = inputData.organic_results || [];\n\nconst sources = [];\nconst snippets = [];\n\nfor (let i = 0; i < Math.min(serpResults.length, 5); i++) {\n  const result = serpResults[i];\n  if (result.link && result.title) {\n    sources.push({\n      url: result.link,\n      title: result.title\n    });\n  }\n  if (result.snippet) {\n    snippets.push(result.snippet);\n  }\n}\n\nconst prepData = $(\"Parse Input\").first().json;\n\nconst researchSummary = `Research on: ${prepData.topic}\\n\\nKey findings:\\n${snippets.join('\\n\\n')}`;\n\nreturn [{\n  json: {\n    researchSummary: researchSummary,\n    sources: sources,\n    topic: prepData.topic,\n    style: prepData.style,\n    length: prepData.length,\n    angle: prepData.angle\n  }\n}];"
+      },
+      "id": "parse-results",
+      "name": "Parse Search Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://n8n.mabus.ai/webhook/phase5-agent-3",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {"timeout": 30000}
+      },
+      "id": "call-agent-3",
+      "name": "Call Agent 3",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 400]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [[{"node": "Parse Input"}]]
+    },
+    "Parse Input": {
+      "main": [[{"node": "SerpApi Search"}]]
+    },
+    "SerpApi Search": {
+      "main": [[{"node": "Parse Search Results"}]]
+    },
+    "Parse Search Results": {
+      "main": [[{"node": "Call Agent 3"}]]
+    },
+    "Call Agent 3": {
+      "main": [[]]
+    }
+  },
+  "pinData": {}
+}

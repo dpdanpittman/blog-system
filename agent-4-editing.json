@@ -1,0 +1,100 @@
+{
+  "name": "PHASE 5: Agent 4 (With Ollama)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "phase5-agent-4",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 400],
+      "webhookId": "phase5-agent-4"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst data = input.body || input;\n\nconst allInputs = $input.all();\nconsole.log('✅ Agent 4: Received', allInputs.length, 'item(s)');\nconsole.log('✅ Agent 4: Blog content length:', (data.blogContent || '').length);\n\nif (allInputs.length !== 1) {\n  console.error('⚠️ AGENT 4 ERROR: Expected 1 item, got', allInputs.length);\n}\n\nreturn [{\n  json: {\n    blogContent: data.blogContent,\n    topic: data.topic,\n    style: data.style,\n    length: data.length,\n    sources: data.sources || []\n  }\n}];"
+      },
+      "id": "parse-input",
+      "name": "Parse Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\n\nconst prompt = `You are an expert blog editor. Improve this long-form blog post while maintaining journalistic objectivity.\n\nORIGINAL POST:\n${data.blogContent}\n\nEdit for:\n1. Grammar and clarity\n2. Flow and structure\n3. Engagement\n4. CRITICAL: Remove ALL first-person language (I, we, my, our) and convert to third-person\n5. Expand content where needed to reach 2500-5000 words\n\nIMPORTANT:\n- This is a LONG-FORM NEWS ARTICLE, not a personal story\n- Use third-person perspective (they, the author, the developer, the team)\n- Maintain objective, journalistic tone\n- DO NOT shorten or summarize - EXPAND and add detail where appropriate\n- Target length: 2500-5000 words\n- Add examples, context, and deeper analysis to reach target length\n- Output ONLY the improved blog post in markdown\n- Start with title on the first line\n- Include all sections and subsections\n- NO editor notes, NO quality scores, NO metadata\n- Just the blog content itself\n\nOutput the complete edited blog post:`;\n\nreturn [{\n  json: {\n    model: 'gpt-oss:20b',\n    prompt: prompt,\n    stream: false,\n    options: { temperature: 0.3 },\n    sources: data.sources,\n    topic: data.topic,\n    style: data.style,\n    length: data.length\n  }\n}];"
+      },
+      "id": "build-edit-prompt",
+      "name": "Build Edit Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://192.168.6.56:11434/api/generate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  model: $json.model,\n  prompt: $json.prompt,\n  stream: $json.stream,\n  options: $json.options\n} }}",
+        "options": {"timeout": 600000}
+      },
+      "id": "edit-post",
+      "name": "Edit Blog Post",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ollamaResponse = $input.first().json;\nconst prepData = $(\"Build Edit Prompt\").first().json;\n\nlet finalPost = ollamaResponse.response || '';\n\n// Clean up if wrapped in markdown code blocks\nif (finalPost.includes('```')) {\n  const match = finalPost.match(/```(?:markdown)?\\s*([\\s\\S]*?)```/);\n  if (match) {\n    finalPost = match[1].trim();\n  }\n}\n\n// Ensure it starts with title\nif (!/^#\\s+/.test(finalPost)) {\n  const titleMatch = finalPost.match(/^#\\s+.+/m);\n  if (titleMatch) {\n    finalPost = finalPost.substring(finalPost.indexOf(titleMatch[0]));\n  }\n}\n\nconst wordCount = finalPost.split(/\\s+/).length;\nconsole.log('✅ Agent 4: Edited post', wordCount, 'words');\n\nreturn [{\n  json: {\n    finalPost: finalPost,\n    topic: prepData.topic,\n    style: prepData.style,\n    length: prepData.length,\n    sources: prepData.sources,\n    qualityScore: null,\n    issuesFound: [],\n    improvementsMade: []\n  }\n}];"
+      },
+      "id": "parse-edit",
+      "name": "Parse Edit Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://n8n.mabus.ai/webhook/phase5-agent-5",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {"timeout": 30000}
+      },
+      "id": "call-agent-5",
+      "name": "Call Agent 5",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 400]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [[{"node": "Parse Input"}]]
+    },
+    "Parse Input": {
+      "main": [[{"node": "Build Edit Prompt"}]]
+    },
+    "Build Edit Prompt": {
+      "main": [[{"node": "Edit Blog Post"}]]
+    },
+    "Edit Blog Post": {
+      "main": [[{"node": "Parse Edit Output"}]]
+    },
+    "Parse Edit Output": {
+      "main": [[{"node": "Call Agent 5"}]]
+    },
+    "Call Agent 5": {
+      "main": [[]]
+    }
+  },
+  "pinData": {}
+}
