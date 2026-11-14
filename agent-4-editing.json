@@ -38,7 +38,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://192.168.6.56:11434/api/generate",
+        "url": "http://OLLAMA_HOST:11434/api/generate",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ {\n  model: $json.model,\n  prompt: $json.prompt,\n  stream: $json.stream,\n  options: $json.options\n} }}",

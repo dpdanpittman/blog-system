@@ -106,7 +106,7 @@ Agent 5: Publishing (Webhook: /webhook/agent-5-publishing)
 ### Prerequisites
 
 - **n8n instance** running (e.g., https://n8n.mabus.ai)
-- **Ollama** running at `http://192.168.6.56:11434` with model `gpt-oss:20b`
+- **Ollama** reachable from n8n (the exports use the placeholder `http://OLLAMA_HOST:11434`) with model `gpt-oss:20b`
 - **SerpApi account** with API key
 - **Blog API** at `https://mabus.ai/api/blog/posts` with Bearer token authentication
 
@@ -257,7 +257,7 @@ This node checks if the post failed validation and should retry:
    ```
 
 #### Ollama (All Agents)
-- Verify all Ollama HTTP Request nodes point to: `http://192.168.6.56:11434`
+- Set all Ollama HTTP Request nodes to your Ollama URL (placeholder in the exports: `http://OLLAMA_HOST:11434`)
 - Model: `gpt-oss:20b`
 - If your Ollama is at a different URL, update all nodes
 

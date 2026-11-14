@@ -241,7 +241,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Get post data from the prep node, not the API response\nconst postData = $(\"Convert MD to HTML & Prep Payload\").first().json;\n\n// Hardcoded notification chat ID\nconst NOTIFICATION_CHAT_ID = '551663660';\n\nconst title = postData.title || 'Untitled Post';\nconst slug = postData.slug || '';\nconst metaDescription = postData.metaDescription || postData.excerpt || '';\nconst wordCount = postData.wordCount || 0;\nconst qualityScore = postData.qualityScore || 0;\nconst readingTime = postData.readingTime || 0;\n\nconst message = `📝 *NEW POST PUBLISHED*\\n\\n*Title:* ${title}\\n\\n*Excerpt:* ${metaDescription.substring(0, 150)}${metaDescription.length > 150 ? '...' : ''}\\n\\n*Stats:*\\n• Words: ${wordCount}\\n• Quality: ${qualityScore}/10\\n• Reading time: ${readingTime} min\\n\\n🔗 https://mabus.ai/blog/${slug}`;\n\nconsole.log('📱 Agent 5: Sending Telegram notification for:', title);\n\nreturn [{\n  json: {\n    chatId: NOTIFICATION_CHAT_ID,\n    message: message,\n    title: title,\n    slug: slug\n  }\n}];"
+        "jsCode": "// Get post data from the prep node, not the API response\nconst postData = $(\"Convert MD to HTML & Prep Payload\").first().json;\n\n// Hardcoded notification chat ID\nconst NOTIFICATION_CHAT_ID = '<chat-id>';\n\nconst title = postData.title || 'Untitled Post';\nconst slug = postData.slug || '';\nconst metaDescription = postData.metaDescription || postData.excerpt || '';\nconst wordCount = postData.wordCount || 0;\nconst qualityScore = postData.qualityScore || 0;\nconst readingTime = postData.readingTime || 0;\n\nconst message = `📝 *NEW POST PUBLISHED*\\n\\n*Title:* ${title}\\n\\n*Excerpt:* ${metaDescription.substring(0, 150)}${metaDescription.length > 150 ? '...' : ''}\\n\\n*Stats:*\\n• Words: ${wordCount}\\n• Quality: ${qualityScore}/10\\n• Reading time: ${readingTime} min\\n\\n🔗 https://mabus.ai/blog/${slug}`;\n\nconsole.log('📱 Agent 5: Sending Telegram notification for:', title);\n\nreturn [{\n  json: {\n    chatId: NOTIFICATION_CHAT_ID,\n    message: message,\n    title: title,\n    slug: slug\n  }\n}];"
       },
       "id": "build-notification",
       "name": "Build Notification Message",
@@ -251,7 +251,7 @@
     },
     {
       "parameters": {
-        "chatId": "551663660",
+        "chatId": "<chat-id>",
         "text": "={{ $json.message }}",
         "additionalFields": {
           "parse_mode": "Markdown"
