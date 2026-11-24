@@ -1,0 +1,855 @@
+{
+  "name": "Blog Pipeline Error Alerts",
+  "nodes": [
+    {
+      "id": "Sticky Note",
+      "name": "Sticky Note",
+      "parameters": {
+        "content": "## Blog pipeline error alerts (fix 1 + fix 3)\nSet as `errorWorkflow` on every blog workflow. On any failure: ONE plain line to the Telegram Blog topic (workflow, step, error; <=300 chars; no secrets). Pipeline failures alert once per failed execution (each retry that fails alerts again); other workflows send the same alert at most once an hour.\n\nThe failed run is found by execution id (`blog_runs.last_exec`), never guessed. It is marked `failed` (or `held` when Agent 5's gate held the post). A scheduled run (or its retry) gets up to 2 retries a day, 30 min apart. A queued topic whose run is not retried is marked `failed`. If the post was already published (e.g. the announcement failed), it only alerts.\n\nTest: run with input `{\"dryRun\": true, \"forceFailAt\": \"agent1\"}` (dry runs are marked [test], never write the queue, retry after 1 min).",
+        "height": 360,
+        "width": 680
+      },
+      "position": [
+        -420,
+        -520
+      ],
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1
+    },
+    {
+      "id": "Error Trigger",
+      "name": "Error Trigger",
+      "parameters": {},
+      "position": [
+        -200,
+        100
+      ],
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1
+    },
+    {
+      "executeOnce": true,
+      "id": "Summarize Failure",
+      "name": "Summarize Failure",
+      "parameters": {
+        "jsCode": "// One plain line: which workflow, which step, what went wrong. No stack traces, no secrets, <= 300 chars.\nconst e = $input.first().json;\nconst wf = (e.workflow && e.workflow.name) || 'unknown workflow';\nconst ex = e.execution || {}, err = ex.error || (e.trigger && e.trigger.error) || {};\nconst step = ex.lastNodeExecuted || (err.node && err.node.name) || (e.trigger ? 'trigger' : 'unknown step');\nlet msg = String(err.message || 'unknown error').split('\\n')[0];\nif (err.description && String(err.description).length < 160 && !msg.includes(err.description)) msg += ' (' + String(err.description).split('\\n')[0] + ')';\nmsg = msg.replace(/\\d{8,10}:[A-Za-z0-9_-]{30,}/g, '<redacted>').replace(/bearer\\s+\\S+/gi, 'Bearer <redacted>')\n  .replace(/((?:api[_-]?key|token|secret|password|key)=)[^&\\s]+/gi, '$1<redacted>').replace(/\\/bot[^\\/\\s]+\\//g, '/bot<redacted>/')\n  .replace(/\\s+/g, ' ').trim();\nconst testMarked = /\\[test\\]/i.test(msg);                 // workflows without a blog_runs row mark test failures in the message\nmsg = msg.replace(/\\s*\\[test\\]\\s*/gi, ' ').trim();\nconst short = wf.replace(/^PHASE 5:\\s*/, '').replace(/\\s*\\(.*\\)$/, '').replace(/^Blog\\s+/, '');\nconsole.log('Error alert for', wf, '/', step, '/ execution', ex.id, '/', msg.slice(0, 200));\nreturn [{ json: { wf, short, step, msg, testMarked, mode: ex.mode || (e.trigger && e.trigger.mode) || '', executionId: String(ex.id || ''),\n  isPipeline: /^PHASE 5: Agent [1-5]/.test(wf), isAgent1: /^PHASE 5: Agent 1/.test(wf) } }];\n"
+      },
+      "position": [
+        20,
+        100
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "id": "Find Failed Run",
+      "name": "Find Failed Run",
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "cachedResultName": "blog_runs",
+          "mode": "list",
+          "value": "{{ DATA_TABLE: blog_runs }}"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "condition": "eq",
+              "keyName": "last_exec",
+              "keyValue": "={{ $json.executionId || '-' }}"
+            }
+          ]
+        },
+        "matchType": "allConditions",
+        "operation": "get",
+        "options": {},
+        "returnAll": true
+      },
+      "position": [
+        240,
+        100
+      ],
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1
+    },
+    {
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "id": "Get Today's Runs",
+      "name": "Get Today's Runs",
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "cachedResultName": "blog_runs",
+          "mode": "list",
+          "value": "{{ DATA_TABLE: blog_runs }}"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "condition": "eq",
+              "keyName": "day",
+              "keyValue": "={{ $now.setZone('UTC').toISODate() }}"
+            }
+          ]
+        },
+        "matchType": "allConditions",
+        "operation": "get",
+        "options": {},
+        "returnAll": true
+      },
+      "position": [
+        460,
+        100
+      ],
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1
+    },
+    {
+      "executeOnce": true,
+      "id": "Decide Retry",
+      "name": "Decide Retry",
+      "parameters": {
+        "jsCode": "// The failed run is the blog_runs row whose last_exec is the failing execution's id (each agent writes it when it starts).\n// No row (e.g. the digest, or Agent 1 failing before it records the run) = no run to blame; nothing is guessed.\nconst s = $('Summarize Failure').first().json;\nconst now = $now.setZone('UTC'), today = now.toISODate();\nconst run = s.executionId ? ($('Find Failed Run').all().map(i => i.json).find(r => r && r.run_id && String(r.last_exec) === s.executionId) || null) : null;\nconst mode = run ? run.mode : (s.isAgent1 && s.mode === 'trigger' ? 'scheduled' : (s.mode || 'unknown'));\nconst dry = run ? (run.dry_run === true || run.dry_run === 'true') : s.testMarked;\nconst published = !!run && run.status === 'published';     // e.g. the announcement failed after the post went out\nconst seen = new Set();\nconst retriesToday = $('Get Today\\'s Runs').all().map(i => i.json)\n  .filter(r => r && r.run_id && !seen.has(r.run_id) && seen.add(r.run_id))\n  .filter(r => r.mode === 'retry' && r.day === today && ((r.dry_run === true || r.dry_run === 'true') === dry)).length;\nconst MAX = 2;\nconst retryable = s.isPipeline && !published && ['scheduled', 'retry'].includes(mode);\nconst retry = retryable && retriesToday < MAX;\nconst waitSeconds = dry ? 60 : 1800;                 // test runs retry after 1 min, real ones after 30 min\nconst at = now.plus({ seconds: waitSeconds }).toFormat('h:mm a');\nconst queueId = run ? Number(run.queue_id) || 0 : 0;\n// Queue: a queued topic whose run failed and will not be retried is marked 'failed' (a retry carries the queueId and picks it up again).\nconst queueFail = !!queueId && !retry && !published;\nconst held = /^Post held/.test(s.msg);\nlet tail = '';\nif (published) tail = ' The post itself is live.';\nelse if (retryable) tail = retry ? ` Retrying at ${at} (${retriesToday + 1} of ${MAX} today).` : ' No retries left today.';\nif (queueFail) tail += ` Queued topic #${queueId} marked failed${dry ? ' (test: not written)' : ''}.`;\nlet text = `${dry ? '[test] ' : ''}Blog ${s.short} failed at \"${s.step}\": ${s.msg}`;\ntext = text.slice(0, 300 - tail.length) + tail;\nconst newRunId = 'run-' + now.toFormat('yyyyLLdd-HHmmss') + '-retry';\n// Dedupe: pipeline failures alert once PER EXECUTION (so a retry that fails the same way still alerts);\n// other workflows (inbox, ham, digest) send the same alert at most once an hour.\nconst dedupeKey = s.isPipeline ? ('exec:' + s.executionId) : (s.wf + '|' + s.step + '|' + s.msg.slice(0, 80));\nconsole.log('Decide:', JSON.stringify({ run: run && run.run_id, mode, dry, published, retriesToday, retry, queueId, queueFail, held }));\nreturn [{ json: { text, retry, waitSeconds, dry, hasRun: !!run && !published, runId: run ? run.run_id : '', queueId, queueFail,\n  writeQueueId: queueFail && !dry ? queueId : -1, runStatus: held ? 'held' : 'failed',\n  forceFail: run ? (run.force_fail || '') : '', newRunId, day: today, msg: s.msg, dedupeKey } }];\n"
+      },
+      "position": [
+        680,
+        100
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "id": "Mark Run Failed",
+      "name": "Mark Run Failed",
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [],
+          "schema": [
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "status",
+              "id": "status",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "finished_at",
+              "id": "finished_at",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "detail",
+              "id": "detail",
+              "required": false,
+              "type": "string"
+            }
+          ],
+          "value": {
+            "detail": "={{ $('Decide Retry').first().json.msg.slice(0, 250) }}",
+            "finished_at": "={{ new Date().toISOString() }}",
+            "status": "={{ $('Decide Retry').first().json.runStatus }}"
+          }
+        },
+        "dataTableId": {
+          "__rl": true,
+          "cachedResultName": "blog_runs",
+          "mode": "list",
+          "value": "{{ DATA_TABLE: blog_runs }}"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "condition": "eq",
+              "keyName": "run_id",
+              "keyValue": "={{ $('Decide Retry').first().json.hasRun ? $('Decide Retry').first().json.runId : '-' }}"
+            }
+          ]
+        },
+        "matchType": "allConditions",
+        "operation": "update",
+        "options": {}
+      },
+      "position": [
+        900,
+        100
+      ],
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1
+    },
+    {
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "id": "Mark Queue Item Failed",
+      "name": "Mark Queue Item Failed",
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [],
+          "schema": [
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "status",
+              "id": "status",
+              "required": false,
+              "type": "string"
+            }
+          ],
+          "value": {
+            "status": "failed"
+          }
+        },
+        "dataTableId": {
+          "__rl": true,
+          "cachedResultName": "blog_topic_queue",
+          "mode": "list",
+          "value": "{{ DATA_TABLE: blog_topic_queue }}"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "condition": "eq",
+              "keyName": "id",
+              "keyValue": "={{ $('Decide Retry').first().json.writeQueueId }}"
+            }
+          ]
+        },
+        "matchType": "allConditions",
+        "operation": "update",
+        "options": {}
+      },
+      "position": [
+        1120,
+        100
+      ],
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1
+    },
+    {
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "id": "Get Last Alert",
+      "name": "Get Last Alert",
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "cachedResultName": "blog_bot_state",
+          "mode": "list",
+          "value": "{{ DATA_TABLE: blog_bot_state }}"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "condition": "eq",
+              "keyName": "key",
+              "keyValue": "last_alert"
+            }
+          ]
+        },
+        "matchType": "allConditions",
+        "operation": "get",
+        "options": {},
+        "returnAll": true
+      },
+      "position": [
+        1340,
+        100
+      ],
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1
+    },
+    {
+      "executeOnce": true,
+      "id": "Skip Repeats",
+      "name": "Skip Repeats",
+      "parameters": {
+        "jsCode": "const d = $('Decide Retry').first().json;\nconst row = $('Get Last Alert').all().map(i => i.json).find(r => r && r.key === 'last_alert') || {};\nlet last = {}; try { last = JSON.parse(row.value || '{}'); } catch (e) {}\nconst repeat = last.key === d.dedupeKey && Date.now() - (last.at || 0) < 3600e3;\nif (repeat) console.log('Same alert sent within the hour; not sending again:', d.dedupeKey);\nreturn [{ json: { ...d, send: !repeat, stateValue: JSON.stringify({ key: d.dedupeKey, at: Date.now() }) } }];\n"
+      },
+      "position": [
+        1560,
+        100
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "executeOnce": true,
+      "id": "Send Alert?",
+      "name": "Send Alert?",
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "Send Alert?",
+              "leftValue": "={{ $json.send }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": true
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          }
+        },
+        "options": {}
+      },
+      "position": [
+        1780,
+        100
+      ],
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2
+    },
+    {
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "{{ CREDENTIAL: Telegram bot }}"
+        }
+      },
+      "executeOnce": true,
+      "id": "Send Failure Alert",
+      "name": "Send Failure Alert",
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        },
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ String($('Skip Repeats').first().json.text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }}"
+      },
+      "position": [
+        2000,
+        0
+      ],
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2
+    },
+    {
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "id": "Remember Alert",
+      "name": "Remember Alert",
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [],
+          "schema": [
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "key",
+              "id": "key",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "value",
+              "id": "value",
+              "required": false,
+              "type": "string"
+            }
+          ],
+          "value": {
+            "key": "last_alert",
+            "value": "={{ $('Skip Repeats').first().json.stateValue }}"
+          }
+        },
+        "dataTableId": {
+          "__rl": true,
+          "cachedResultName": "blog_bot_state",
+          "mode": "list",
+          "value": "{{ DATA_TABLE: blog_bot_state }}"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "condition": "eq",
+              "keyName": "key",
+              "keyValue": "last_alert"
+            }
+          ]
+        },
+        "matchType": "allConditions",
+        "operation": "upsert",
+        "options": {}
+      },
+      "position": [
+        2220,
+        0
+      ],
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1
+    },
+    {
+      "executeOnce": true,
+      "id": "Retry Planned?",
+      "name": "Retry Planned?",
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "Retry Planned?",
+              "leftValue": "={{ $('Decide Retry').first().json.retry }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": true
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          }
+        },
+        "options": {}
+      },
+      "position": [
+        2440,
+        100
+      ],
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2
+    },
+    {
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "id": "Record Retry",
+      "name": "Record Retry",
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [],
+          "schema": [
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "run_id",
+              "id": "run_id",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "mode",
+              "id": "mode",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "day",
+              "id": "day",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "status",
+              "id": "status",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "dry_run",
+              "id": "dry_run",
+              "required": false,
+              "type": "boolean"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "force_fail",
+              "id": "force_fail",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "queue_id",
+              "id": "queue_id",
+              "required": false,
+              "type": "number"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "started_at",
+              "id": "started_at",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "finished_at",
+              "id": "finished_at",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "detail",
+              "id": "detail",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "post_url",
+              "id": "post_url",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "topic",
+              "id": "topic",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "last_exec",
+              "id": "last_exec",
+              "required": false,
+              "type": "string"
+            }
+          ],
+          "value": {
+            "day": "={{ $('Decide Retry').first().json.day }}",
+            "detail": "",
+            "dry_run": "={{ $('Decide Retry').first().json.dry }}",
+            "finished_at": "",
+            "force_fail": "={{ $('Decide Retry').first().json.forceFail }}",
+            "last_exec": "",
+            "mode": "retry",
+            "post_url": "",
+            "queue_id": "={{ $('Decide Retry').first().json.queueId }}",
+            "run_id": "={{ $('Decide Retry').first().json.newRunId }}",
+            "started_at": "={{ new Date().toISOString() }}",
+            "status": "waiting",
+            "topic": ""
+          }
+        },
+        "dataTableId": {
+          "__rl": true,
+          "cachedResultName": "blog_runs",
+          "mode": "list",
+          "value": "{{ DATA_TABLE: blog_runs }}"
+        },
+        "operation": "insert",
+        "options": {}
+      },
+      "position": [
+        2660,
+        100
+      ],
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1
+    },
+    {
+      "executeOnce": true,
+      "id": "Wait Before Retry",
+      "name": "Wait Before Retry",
+      "parameters": {
+        "amount": "={{ $('Decide Retry').first().json.waitSeconds }}",
+        "resume": "timeInterval",
+        "unit": "seconds"
+      },
+      "position": [
+        2880,
+        100
+      ],
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1
+    },
+    {
+      "executeOnce": true,
+      "id": "Retry Input",
+      "name": "Retry Input",
+      "parameters": {
+        "jsCode": "const d = $('Decide Retry').first().json;\nreturn [{ json: { mode: 'retry', runId: d.newRunId, queueId: d.queueId, dryRun: d.dry, forceFailAt: d.dry ? d.forceFail : '' } }];\n"
+      },
+      "position": [
+        3100,
+        100
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "executeOnce": true,
+      "id": "Start Retry Run (Agent 1)",
+      "name": "Start Retry Run (Agent 1)",
+      "parameters": {
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": false
+        },
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_WITH_ID_OF: Agent 1"
+        }
+      },
+      "position": [
+        3320,
+        100
+      ],
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2
+    }
+  ],
+  "connections": {
+    "Decide Retry": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Mark Run Failed",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Summarize Failure",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Find Failed Run": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Get Today's Runs",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Get Last Alert": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Skip Repeats",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Get Today's Runs": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Decide Retry",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Mark Queue Item Failed": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Get Last Alert",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Mark Run Failed": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Mark Queue Item Failed",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Record Retry": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Wait Before Retry",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Remember Alert": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Retry Planned?",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Retry Input": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Start Retry Run (Agent 1)",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Retry Planned?": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Record Retry",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Send Alert?": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Send Failure Alert",
+            "type": "main"
+          }
+        ],
+        [
+          {
+            "index": 0,
+            "node": "Retry Planned?",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Send Failure Alert": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Remember Alert",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Skip Repeats": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Send Alert?",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Summarize Failure": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Find Failed Run",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Wait Before Retry": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Retry Input",
+            "type": "main"
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "timezone": "UTC"
+  }
+}

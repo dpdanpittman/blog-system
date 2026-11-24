@@ -1,0 +1,363 @@
+{
+  "name": "Ham Radio Band Conditions (daily)",
+  "nodes": [
+    {
+      "id": "Sticky Note",
+      "name": "Sticky Note",
+      "parameters": {
+        "content": "## Ham radio band conditions (automation C)\nDaily **6:00 AM UTC** (cron `0 6 * * *`, workflow timezone set). Skips if today's note (`band-conditions-YYYY-MM-DD`) already exists, so at most one a day. NOAA SWPC solar flux + K index (+ forecast), hamqsl as backup. Plain-words HF read and an aurora line for one configured place (PLACE) from fixed rules in code; no model, no invented numbers. POST https://your-blog.example/api/hamradio/posts.\n\n**Dry run:** run with input `{\"dryRun\": true}` (builds the note, does not post).",
+        "height": 280,
+        "width": 620
+      },
+      "position": [
+        -420,
+        -460
+      ],
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1
+    },
+    {
+      "id": "Daily 6 AM",
+      "name": "Daily 6 AM",
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "expression": "0 6 * * *",
+              "field": "cronExpression"
+            }
+          ]
+        }
+      },
+      "position": [
+        -200,
+        100
+      ],
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2
+    },
+    {
+      "id": "Normalize Run Input",
+      "name": "Normalize Run Input",
+      "parameters": {
+        "jsCode": "const j0 = $input.first().json || {};\nconst j = (j0.body && typeof j0.body === 'object') ? j0.body : j0;\nconst now = $now.setZone('UTC');\nreturn [{ json: { dryRun: j.dryRun === true, day: now.toISODate(), slug: 'band-conditions-' + now.toISODate() } }];\n"
+      },
+      "position": [
+        20,
+        100
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "id": "Already Posted Today?",
+      "name": "Already Posted Today?",
+      "parameters": {
+        "jsCode": "// At most one note per day: if today's slug is already in the ham radio section, stop.\nconst d = $input.first().json;\nconst res = await this.helpers.httpRequest({ url: `https://your-blog.example/api/hamradio/posts/${d.slug}`, json: true, timeout: 15000, returnFullResponse: true, ignoreHttpStatusErrors: true });\nif (res.statusCode === 200) { console.log('Ham: note for', d.day, 'already posted; nothing to do'); return []; }\nif (res.statusCode !== 404) throw new Error('Could not check for today\\'s note: HTTP ' + res.statusCode);\nreturn [{ json: d }];\n"
+      },
+      "position": [
+        240,
+        100
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "id": "Fetch Space Weather",
+      "name": "Fetch Space Weather",
+      "parameters": {
+        "jsCode": "// Public data, no key. NOAA SWPC is primary; hamqsl (N0NBH) fills gaps. Numbers come only from here.\nconst sleep = (ms) => new Promise(r => setTimeout(r, ms));\nconst helpers = this.helpers;\nasync function get(url, json) { let last; for (let i = 1; i <= 3; i++) { try { return await helpers.httpRequest({ url, json, encoding: json ? undefined : 'text', timeout: 15000, headers: { 'User-Agent': 'blog-bot/1.0' } }); } catch (e) { last = e; if (i < 3) await sleep(5000); } } throw last; }\nconst d = $input.first().json, got = { notes: [] };\ntry { const f = await get('https://services.swpc.noaa.gov/products/summary/10cm-flux.json', true);\n  const x = Array.isArray(f) ? f[0] : f; got.sfi = Math.round(Number(x.flux ?? x.Flux)); got.sfiTime = x.time_tag || x.TimeStamp; } catch (e) { got.notes.push('NOAA flux unavailable'); }\ntry { const k = await get('https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json', true);\n  const rows = Array.isArray(k) ? k.filter(r => r && !Array.isArray(r) ? true : r[0] !== 'time_tag') : [];\n  const last = rows[rows.length - 1]; got.kp = Number(Array.isArray(last) ? last[1] : last.Kp); got.kpTime = Array.isArray(last) ? last[0] : last.time_tag;\n  got.kpMax24 = Math.max(...rows.slice(-8).map(r => Number(Array.isArray(r) ? r[1] : r.Kp))); } catch (e) { got.notes.push('NOAA K index unavailable'); }\ntry { const fc = await get('https://services.swpc.noaa.gov/products/noaa-planetary-k-index-forecast.json', true);\n  const now = Date.now(); const next = fc.filter(r => r && !Array.isArray(r) && r.observed === 'predicted' && Date.parse(r.time_tag + 'Z') > now && Date.parse(r.time_tag + 'Z') < now + 24 * 3600e3);\n  if (next.length) got.kpForecastMax = Math.max(...next.map(r => Number(r.kp))); } catch (e) { got.notes.push('NOAA K forecast unavailable'); }\ntry { const x = String(await get('https://www.hamqsl.com/solarxml.php', false));\n  const tag = (t) => { const m = x.match(new RegExp('<' + t + '>\\\\s*([^<]*?)\\\\s*</' + t + '>')); return m ? m[1] : ''; };\n  got.hamqsl = { sfi: Number(tag('solarflux')) || null, k: Number(tag('kindex')), updated: tag('updated') };\n  if (got.sfi == null || isNaN(got.sfi)) { got.sfi = got.hamqsl.sfi; got.sfiFrom = 'hamqsl'; }\n  if (got.kp == null || isNaN(got.kp)) { got.kp = got.hamqsl.k; got.kpFrom = 'hamqsl'; } } catch (e) { got.notes.push('hamqsl unavailable'); }\nif (!(got.sfi > 0) || isNaN(got.kp)) throw new Error('No usable solar flux or K index from NOAA or hamqsl: ' + got.notes.join(', '));\nreturn [{ json: { ...d, ...got } }];\n"
+      },
+      "position": [
+        460,
+        100
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "id": "Build Band Note",
+      "name": "Build Band Note",
+      "parameters": {
+        "jsCode": "// Fixed rules, no model. The aurora lines assume about 53 N geomagnetic latitude. Set PLACE and the Kp thresholds for yours.\nconst PLACE = 'YOUR_TOWN';\nconst d = $input.first().json;\nconst sfi = d.sfi, kp = Math.round(d.kp * 10) / 10, kpAhead = d.kpForecastMax != null ? Math.round(d.kpForecastMax * 10) / 10 : null;\nconst kHigh = Math.max(kp, kpAhead || 0);\nconst geo = kp < 3 ? 'quiet' : kp < 4 ? 'unsettled' : kp < 5 ? 'active' : 'storm-level (G' + Math.min(5, Math.floor(kp) - 4) + ')';\nconst fluxWord = sfi >= 150 ? 'very high' : sfi >= 120 ? 'high' : sfi >= 90 ? 'moderate' : sfi >= 70 ? 'low' : 'very low';\nlet day;\nif (kp >= 5) day = 'Daytime HF is likely degraded by the geomagnetic storm; 20 m is the best bet, and polar paths will be poor.';\nelse if (sfi >= 150) day = 'Good on 10 m, 12 m and 15 m by day, with 17 m and 20 m strong.';\nelse if (sfi >= 120) day = 'Good on 15 m, 17 m and 20 m by day; 10 m and 12 m likely open toward the south and on long paths.';\nelse if (sfi >= 90) day = 'Good on 20 m and 17 m by day; 15 m usable, 10 m only occasionally.';\nelse if (sfi >= 70) day = '20 m is the main daytime band; 17 m and 15 m marginal, 10 m mostly closed.';\nelse day = 'Upper HF is mostly closed; stick to 20 m and lower by day.';\nif (kp >= 4 && kp < 5) day += ' Expect some absorption and fading on higher-latitude paths.';\nlet night;\nif (kp < 3) night = 'Good on 40 m and 80 m at night, with low noise' + (sfi >= 120 ? '; 20 m may stay open into the evening.' : '.');\nelse if (kp < 5) night = '40 m usable at night; 80 m noisier than usual.';\nelse night = 'Night-time HF is disturbed; 40 m for regional contacts, expect high noise on 80 m.';\nlet aurora = '';\nif (kHigh >= 6) aurora = `Aurora: Kp ${kHigh} means aurora is likely visible from ${PLACE} after dark, possibly overhead. 6 m and 2 m aurora scatter are worth trying.`;\nelse if (kHigh >= 5) aurora = `Aurora: Kp ${kHigh} means aurora is worth a look from ${PLACE} on the northern horizon after dark, away from city lights.`;\nconst D = DateTime.fromISO(d.day).toFormat('LLL d, yyyy');\nconst title = `HF band conditions for ${D}: solar flux ${sfi}, K ${kp}`;\nconst lines = [\n  `<p><strong>Solar flux (10.7 cm):</strong> ${sfi} (${fluxWord})${d.sfiFrom ? ' (hamqsl)' : ''}. <strong>Planetary K index:</strong> ${kp} (${geo})${d.kpFrom ? ' (hamqsl)' : ''}${kpAhead != null ? `, forecast up to ${kpAhead} in the next 24 hours` : ''}.</p>`,\n  `<p><strong>By day:</strong> ${day}</p>`,\n  `<p><strong>At night:</strong> ${night}</p>`,\n];\nif (aurora) lines.push(`<p><strong>${aurora}</strong></p>`);\nlines.push('<p><em>Read from NOAA SWPC data with simple fixed rules, generated automatically at 6 AM Mountain. Real conditions vary by path and time of day.</em></p>');\nconst excerpt = `Flux ${sfi}, K ${kp}. ${day.split(';')[0].replace(/\\.$/, '')}.${aurora ? ' Aurora worth a look tonight.' : ''}`.slice(0, 300);\nconst sources = [{ url: 'https://services.swpc.noaa.gov/products/summary/10cm-flux.json', title: 'NOAA SWPC 10.7 cm solar flux' },\n  { url: 'https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json', title: 'NOAA SWPC planetary K index' },\n  { url: 'https://services.swpc.noaa.gov/products/noaa-planetary-k-index-forecast.json', title: 'NOAA SWPC K index forecast' }];\nif (d.hamqsl) sources.push({ url: 'https://www.hamqsl.com/solar.html', title: 'N0NBH solar-terrestrial data (hamqsl.com)' });\nconst payload = { slug: d.slug, title, date: d.day, excerpt, tags: ['Band Conditions', 'Propagation', 'HF'], readingTime: 1, content: lines.join('\\n'), sources,\n  editorNotes: { generatedBy: 'n8n Ham Radio Band Conditions (daily)', sfi, kp, kpForecastMax: kpAhead, sfiTime: d.sfiTime, kpTime: d.kpTime, notes: d.notes } };\n// Notable day (2026-11-13: the ham note goes to X only on notable days): a geomagnetic storm now or forecast\n// (Kp 5 or more, the same rule as the aurora line) or very high solar flux (150 or more). Fixed rule, no model.\nconst notable = kHigh >= 5 || sfi >= 150;\nconsole.log('Ham:', title, '| aurora line:', !!aurora, '| notable for X:', notable);\nreturn [{ json: { payload, dryRun: d.dryRun, notable } }];\n"
+      },
+      "position": [
+        680,
+        100
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "id": "Dry Run?",
+      "name": "Dry Run?",
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "Dry Run?",
+              "leftValue": "={{ $json.dryRun === true }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": true
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          }
+        },
+        "options": {}
+      },
+      "position": [
+        900,
+        100
+      ],
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2
+    },
+    {
+      "id": "Dry Run Report",
+      "name": "Dry Run Report",
+      "parameters": {
+        "jsCode": "console.log('Ham: DRY RUN - not posted.'); return [{ json: { dryRun: 'not posted', ...$input.first().json.payload } }];\n"
+      },
+      "position": [
+        1120,
+        0
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "id": "Post to Ham Radio Section",
+      "maxTries": 3,
+      "name": "Post to Ham Radio Section",
+      "parameters": {
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.BLOG_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "jsonBody": "={{ $json.payload }}",
+        "method": "POST",
+        "options": {
+          "timeout": 30000
+        },
+        "sendBody": true,
+        "sendHeaders": true,
+        "specifyBody": "json",
+        "url": "https://your-blog.example/api/hamradio/posts"
+      },
+      "position": [
+        1120,
+        200
+      ],
+      "retryOnFail": true,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "Check Ham Response",
+      "name": "Check Ham Response",
+      "parameters": {
+        "jsCode": "const r = $input.first().json || {}; if (!r.post || !r.post.slug) throw new Error('Ham radio API did not confirm the note: ' + JSON.stringify(r).slice(0, 200)); console.log('Ham: posted', r.post.slug); const b = $('Build Band Note').first().json; return [{ json: { slug: r.post.slug, url: 'https://your-blog.example/hamradio/' + r.post.slug, title: b.payload.title, excerpt: b.payload.excerpt, notable: b.notable === true } }];\n"
+      },
+      "position": [
+        1340,
+        200
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "id": "Notable Day?",
+      "name": "Notable Day?",
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "Notable Day?",
+              "leftValue": "={{ $json.notable === true }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": true
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          }
+        },
+        "options": {}
+      },
+      "position": [
+        1560,
+        200
+      ],
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2
+    },
+    {
+      "id": "Hand to X Poster",
+      "name": "Hand to X Poster",
+      "parameters": {
+        "jsonBody": "={{ { title: $json.title, excerpt: $json.excerpt, url: $json.url, kind: 'ham', waitSeconds: 360 } }}",
+        "method": "POST",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "https://your-n8n.example/webhook/blog-x-poster"
+      },
+      "position": [
+        1780,
+        100
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2
+    }
+  ],
+  "connections": {
+    "Already Posted Today?": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Fetch Space Weather",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Build Band Note": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Dry Run?",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Check Ham Response": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Notable Day?",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Daily 6 AM": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Normalize Run Input",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Dry Run?": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Dry Run Report",
+            "type": "main"
+          }
+        ],
+        [
+          {
+            "index": 0,
+            "node": "Post to Ham Radio Section",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Fetch Space Weather": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Build Band Note",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Normalize Run Input": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Already Posted Today?",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Notable Day?": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Hand to X Poster",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Post to Ham Radio Section": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Check Ham Response",
+            "type": "main"
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "REPLACE_WITH_ID_OF: Blog Pipeline Error Alerts",
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "timezone": "UTC"
+  }
+}

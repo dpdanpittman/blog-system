@@ -1,0 +1,131 @@
+{
+  "name": "Blog Post to X",
+  "nodes": [
+    {
+      "id": "Sticky Note",
+      "name": "Sticky Note",
+      "parameters": {
+        "content": "## Blog Post to X\nPosts one line to X as the site's account whenever something is published (2026-11-12). Called by Agent 5 (blog posts and the weekly digest) with `{title, excerpt, url, kind, waitSeconds}`; answers at once. It waits `waitSeconds` first (6 minutes from Agent 5) so the page exists on the site before X fetches the link preview. If X refuses (for example no credits), this workflow fails and the error workflow sends one alert line. The blog post is already published by then and is not affected.",
+        "height": 240,
+        "width": 560
+      },
+      "position": [
+        -420,
+        -400
+      ],
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1
+    },
+    {
+      "id": "Webhook Trigger",
+      "name": "Webhook Trigger",
+      "parameters": {
+        "httpMethod": "POST",
+        "options": {},
+        "path": "blog-x-poster",
+        "responseMode": "onReceived"
+      },
+      "position": [
+        -200,
+        100
+      ],
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2
+    },
+    {
+      "id": "Build X Post",
+      "name": "Build X Post",
+      "parameters": {
+        "jsCode": "// One X post per published item: title, a short hook, the link. X counts any link as 23 characters; the limit is 280.\nconst input = $input.first().json;\nconst d = input.body || input;\nconst clean = (t) => String(t || '').replace(/\\s+/g, ' ').trim();\nconst url = clean(d.url);\nif (!/^https:\\/\\/your-blog\\.example\\//.test(url)) throw new Error('X post refused: the link is not on your-blog.example');\nconst title = clean(d.title).slice(0, 150);\nif (!title) throw new Error('X post refused: no title');\nconst head = d.kind === 'digest' ? 'Weekly digest: ' : d.kind === 'ham' ? 'Band conditions: ' : '';\nconst cut = /(\\.{3}|…)$/.test(clean(d.excerpt));                // the blog's excerpt is already cut mid-sentence\nlet hook = clean(d.excerpt).replace(/(\\.{3}|…)$/, '') + (cut ? '…' : '');\nconst room = 280 - 23 - (head + title).length - 4;          // 4 = the line breaks\nif (hook.length > room) { hook = hook.slice(0, Math.max(0, room - 1)); hook = hook.slice(0, hook.lastIndexOf(' ')) + '…'; }\nif (room < 40 || hook === '…') hook = '';\nconst text = head + title + (hook ? '\\n\\n' + hook : '') + '\\n\\n' + url;\nreturn [{ json: { text, waitSeconds: Math.min(900, Math.max(0, Number(d.waitSeconds) || 0)) } }];\n"
+      },
+      "position": [
+        20,
+        100
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "id": "Wait for the Page",
+      "name": "Wait for the Page",
+      "parameters": {
+        "amount": "={{ $json.waitSeconds }}",
+        "resume": "timeInterval",
+        "unit": "seconds"
+      },
+      "position": [
+        240,
+        100
+      ],
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1
+    },
+    {
+      "credentials": {
+        "twitterOAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "{{ CREDENTIAL: X OAuth2 }}"
+        }
+      },
+      "id": "Post to X",
+      "name": "Post to X",
+      "parameters": {
+        "additionalFields": {},
+        "operation": "create",
+        "resource": "tweet",
+        "text": "={{ $('Build X Post').first().json.text }}"
+      },
+      "position": [
+        460,
+        100
+      ],
+      "type": "n8n-nodes-base.twitter",
+      "typeVersion": 2
+    }
+  ],
+  "connections": {
+    "Build X Post": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Wait for the Page",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Wait for the Page": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Post to X",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Build X Post",
+            "type": "main"
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "REPLACE_WITH_ID_OF: Blog Pipeline Error Alerts",
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "timezone": "UTC"
+  }
+}

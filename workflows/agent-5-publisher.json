@@ -1,0 +1,1459 @@
+{
+  "name": "PHASE 5: Agent 5 (With Publishing)",
+  "nodes": [
+    {
+      "id": "Sticky Note",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        -460
+      ],
+      "parameters": {
+        "content": "## Agent 5: quality check + publish\nStarted by Agent 4 or the weekly digest (answers at once). Link guard -> quality score -> HTML -> slug check (never overwrites) -> **dry run?** If `run.dryRun` is true it SKIPS the blog API and Telegram and logs whether it would publish or hold. Otherwise **Publish Gate**: any blocker (editor did not check every section, numbers not in the research, another script, too short, no title, score < 6) HOLDS the post: no publish, one alert via the error workflow. Then **Day Already Published?** (blog_runs): if this run, or for a scheduled/retry run that day's scheduled/retry post, is already published, it marks the run `skipped` and stops quietly. Else POST https://your-blog.example/api/blog/posts (3 tries), mark the run published, queue item done, Telegram announcement, learnings tables (posts only).\n\n**Dry run:** start from Agent 1 with `{\"dryRun\": true}`.",
+        "width": 600,
+        "height": 280
+      }
+    },
+    {
+      "id": "Webhook Trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -200,
+        100
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "blog-agent-5",
+        "responseMode": "onReceived",
+        "options": {}
+      }
+    },
+    {
+      "id": "Parse Input",
+      "name": "Parse Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        20,
+        100
+      ],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst d = input.body || input;\nconst run = d.run || { runId: 'unknown', mode: 'manual', dryRun: false };\nif (run.dryRun && run.forceFailAt === 'agent5') throw new Error('Forced test failure in Agent 5 (dry run, on purpose)');\nconsole.log('Agent 5: run', run.runId, run.dryRun ? '(DRY RUN)' : '', '| mode:', run.mode);\nreturn [{ json: { finalPost: d.finalPost || '', topic: d.topic, style: d.style, length: d.length, run,\n  sources: (Array.isArray(d.sources) ? d.sources : []).filter(s => s && /^https?:\\/\\/[^\\s]+$/.test(s.url || '') && s.url.length < 1500 && !/^https?:\\/\\/(www\\.)?google\\.[a-z.]+\\/(goto|url)\\b/.test(s.url)),\n  kind: d.kind || 'post', slugOverride: d.slugOverride || '', appendSources: d.appendSources !== false, tags: d.tags || null,\n  editorNote: d.editorNote || '', writer: d.writer || null, researchSummary: String(d.researchSummary || ''),\n  targetWords: Number(d.targetWords) || null, editorOk: (d.kind || 'post') === 'digest' ? true : d.editorOk === true } }];\n"
+      }
+    },
+    {
+      "id": "Clean Links & Add Sources",
+      "name": "Clean Links & Add Sources",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// Deterministic guard: models never add links. Any markdown link whose URL is not in the research sources loses its link.\nconst d = $input.first().json;\nconst strip = (u) => String(u).replace(/\\/$/, '');\nconst allowed = new Set(d.sources.map(s => strip(s.url)));\nlet md = d.finalPost, removed = 0, citations = 0;\nmd = md.replace(/\\[([^\\]]+)\\]\\(([^)\\s]+)\\)/g, (m, t, u) => allowed.has(strip(u)) ? m : (removed++, t));\n// Inline citations like \"(Source 1)\", \"(Sources 1 and 3)\" or \"[2]\" do not match the unnumbered Sources list: remove them.\nmd = md.replace(/\\s?\\((?:see\\s+)?sources?\\s*\\d+(?:\\s*(?:,|and|&|\\/)\\s*\\d+)*\\)/gi, () => (citations++, ''))\n       .replace(/\\s?\\[(\\d{1,2})\\](?!\\()/g, () => (citations++, ''));\nmd = md.replace(/\\n#{1,3}\\s*(Sources|References|Further reading|Citations)\\s*\\n[\\s\\S]*$/i, '\\n').trim();\nif (d.appendSources && d.sources.length)\n  md += '\\n\\n## Sources\\n\\n' + d.sources.map(s => `- [${String(s.title || s.url).replace(/[\\[\\]]/g, '').slice(0, 200)}](${s.url})`).join('\\n');\nconsole.log('Agent 5: links removed by guard:', removed, '| inline citations removed:', citations);\nconst wordCount = (md.match(/\\S+/g) || []).length;\nreturn [{ json: { ...d, finalPost: md, linksRemoved: removed, citationsRemoved: citations, wordCount, sectionCount: (md.match(/^##\\s+/gm) || []).length } }];\n"
+      }
+    },
+    {
+      "id": "Validate Quality",
+      "name": "Validate Quality",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// Quality checks. Issues lower the score; BLOCKERS stop the publish (the post is held and the error workflow alerts the owner).\nconst d = $input.first().json;\nconst p = d.finalPost, issues = [];\nconst isDigest = d.kind === 'digest';\n// Minimum length is a flat floor, not a share of the writer's target (2026-11-13): the Opus editor cuts padding and\n// unsupported claims on purpose, and the writer stops when the research runs out, so a true post is often well under\n// the target (run-20261113-130000-2tmp: target 1600, edited post 843 words, held at \"below 960\"). Short and true is fine.\nconst min = isDigest ? 80 : 400;\nconst body = p.replace(/\\n## Sources\\n[\\s\\S]*$/, '');                 // the Sources list is generated, not written\nconst prose = body.replace(/```[\\s\\S]*?```/g, ' ').replace(/`[^`]*`/g, ' ').replace(/\\]\\([^)]*\\)/g, ']');\nconst unquoted = prose.replace(/\"[^\"\\n]*\"|“[^”\\n]*”/g, ' ');\nif (d.wordCount < min) issues.push({ type: 'word_count_low', severity: 'critical', message: `Word count ${d.wordCount} below ${min}` });\nif (!/^#\\s+/.test(p)) issues.push({ type: 'missing_title', severity: 'critical', message: 'Missing H1 title' });\nif (!isDigest && d.sectionCount < 3) issues.push({ type: 'insufficient_sections', severity: 'medium', message: `Only ${d.sectionCount} sections` });\nif (!d.editorOk) issues.push({ type: 'editor_incomplete', severity: 'critical', message: 'The editor did not check every section: ' + String(d.editorNote).slice(0, 120) });\n// Script check: CJK, Cyrillic, Arabic, Hebrew, Thai, Hangul (qwq sometimes slips into Chinese).\nconst foreign = (prose.match(/[Ѐ-ӿ֐-׿؀-ۿ฀-๿぀-ヿ㐀-䶿一-鿿가-힯]+/g) || []);\nif (foreign.length) issues.push({ type: 'non_latin_script', severity: 'critical', message: 'Text in another script: ' + foreign.slice(0, 3).join(' ') });\n// First person, outside quotes and code.\nconst fp = (unquoted.match(/\\b(?:[Ww]e|[Ww]e're|[Ww]e've|[Ww]e'll|[Ww]e'd|[Oo]ur|[Oo]urs|[Oo]urselves|I|I'm|I've|I'll|I'd|my|me)\\b(?![\\/-])/g) || []);\nif (fp.length) issues.push({ type: 'first_person_language', severity: 'high', message: `First person outside quotes (${fp.length}x: ${[...new Set(fp)].slice(0, 4).join(', ')})` });\n// Numbers must come from the research: every number with 2+ digits or a decimal point must appear in the research, topic or source titles.\nconst R = (String(d.researchSummary) + ' ' + String(d.topic) + ' ' + d.sources.map(s => s.title + ' ' + s.url).join(' ')).replace(/,/g, '');\nconst nums = [...new Set((prose.match(/(?<![\\w.])\\d[\\d,]*(?:\\.\\d+)*/g) || []).map(x => x.replace(/,/g, '')))];\nconst esc = (x) => x.replace(/\\./g, '\\\\.');\nconst unsupported = nums.filter(x => (x.includes('.') || Number(x) > 10) && !new RegExp('(^|[^\\\\d.])' + esc(x) + '(?![\\\\d]|\\\\.\\\\d)').test(R));\nif (unsupported.length) issues.push({ type: 'unsupported_numbers', severity: 'critical', message: 'Numbers not in the research: ' + unsupported.slice(0, 8).join(', ') });\nif (d.linksRemoved > 0) issues.push({ type: 'unlisted_links_removed', severity: 'medium', message: `${d.linksRemoved} links not in the research were removed` });\nif (d.citationsRemoved > 0) issues.push({ type: 'inline_citations_removed', severity: 'medium', message: `${d.citationsRemoved} inline citations removed` });\nlet score = 10 - issues.reduce((s, i) => s + ({ critical: 3, high: 2, medium: 1 }[i.severity] || 0), 0);\nscore = Math.max(0, score);\nconst MIN_SCORE = 6;\nconst blockers = issues.filter(i => i.severity === 'critical').map(i => i.message);\nif (score < MIN_SCORE && !blockers.length) blockers.push(`quality score ${score} below ${MIN_SCORE}`);\nconsole.log('Agent 5: quality score', score, '| issues', JSON.stringify(issues.map(i => i.type)), '| blockers', JSON.stringify(blockers));\nreturn [{ json: { ...d, quality_score: score, issues, blockers, wouldPublish: blockers.length === 0, hasIssues: issues.length > 0, timestamp: new Date().toISOString() } }];\n"
+      }
+    },
+    {
+      "id": "Convert MD to HTML & Prep Payload",
+      "name": "Convert MD to HTML & Prep Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// Markdown -> HTML (block-aware: lists, quotes and code stay grouped; underscores inside URLs are left alone).\nconst d = $input.first().json;\nconst esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nfunction inline(s) {\n  const keep = [];\n  s = esc(s);\n  s = s.replace(/`([^`]+)`/g, (m, c) => { keep.push(`<code>${c}</code>`); return `\\u0000${keep.length - 1}\\u0000`; });\n  s = s.replace(/\\[([^\\]]+)\\]\\(([^)\\s]+)\\)/g, (m, t, u) => { keep.push(`<a href=\"${u.replace(/\"/g, '%22')}\" target=\"_blank\" rel=\"noopener noreferrer\">${t}</a>`); return `\\u0000${keep.length - 1}\\u0000`; });\n  s = s.replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>').replace(/(^|[^\\w*])\\*(?!\\s)(.+?)\\*(?!\\w)/g, '$1<em>$2</em>')\n       .replace(/(^|\\W)_(?!\\s)(.+?)_(?!\\w)/g, '$1<em>$2</em>');\n  return s.replace(/\\u0000(\\d+)\\u0000/g, (m, i) => keep[Number(i)]);\n}\nfunction toHtml(md) {\n  const lines = md.split('\\n'), out = []; let i = 0, para = [];\n  const flush = () => { if (para.length) { out.push('<p>' + inline(para.join(' ')) + '</p>'); para = []; } };\n  while (i < lines.length) {\n    const l = lines[i];\n    if (/^```/.test(l)) { flush(); const buf = []; i++; while (i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i++]); i++; out.push('<pre><code>' + esc(buf.join('\\n')) + '</code></pre>'); continue; }\n    let m;\n    if ((m = l.match(/^(#{1,4})\\s+(.*)$/))) { flush(); const lv = Math.max(2, m[1].length); out.push(`<h${lv}>${inline(m[2].trim())}</h${lv}>`); i++; continue; }\n    if (/^\\s*[-*]\\s+/.test(l)) { flush(); const it = []; while (i < lines.length && /^\\s*[-*]\\s+/.test(lines[i])) it.push('<li>' + inline(lines[i++].replace(/^\\s*[-*]\\s+/, '')) + '</li>'); out.push('<ul>' + it.join('') + '</ul>'); continue; }\n    if (/^\\s*\\d+[.)]\\s+/.test(l)) { flush(); const it = []; while (i < lines.length && /^\\s*\\d+[.)]\\s+/.test(lines[i])) it.push('<li>' + inline(lines[i++].replace(/^\\s*\\d+[.)]\\s+/, '')) + '</li>'); out.push('<ol>' + it.join('') + '</ol>'); continue; }\n    if (/^>\\s?/.test(l)) { flush(); const q = []; while (i < lines.length && /^>\\s?/.test(lines[i])) q.push(lines[i++].replace(/^>\\s?/, '')); out.push('<blockquote>' + inline(q.join(' ')) + '</blockquote>'); continue; }\n    if (/^(-{3,}|\\*{3,})\\s*$/.test(l)) { flush(); out.push('<hr>'); i++; continue; }\n    if (!l.trim()) { flush(); i++; continue; }\n    para.push(l.trim()); i++;\n  }\n  flush(); return out.join('\\n');\n}\nconst tm = d.finalPost.match(/^#\\s+(.+)$/m);\nconst title = (tm ? tm[1] : d.topic || 'Untitled').replace(/[*_`#]/g, '').trim().slice(0, 300);\nconst bodyMd = tm ? d.finalPost.replace(tm[0], '').trim() : d.finalPost;       // the site renders the title itself\nconst content = toHtml(bodyMd);\nlet slug = d.slugOverride || title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');\nif (slug.length > 80) slug = slug.slice(0, 80).replace(/-[^-]*$/, '');\nif (!slug) slug = 'post-' + Date.now();\nconst today = $now.setZone('UTC').toISODate();\nif (!d.slugOverride) {        // never overwrite an existing post (the API upserts by slug)\n  const res = await this.helpers.httpRequest({ url: `https://your-blog.example/api/blog/posts/${slug}`, json: true, timeout: 15000, returnFullResponse: true, ignoreHttpStatusErrors: true });\n  if (res.statusCode === 200) slug = `${slug}-${today}`;\n  else if (res.statusCode !== 404) throw new Error('Could not check whether the slug is free: HTTP ' + res.statusCode);\n}\nconst firstP = (content.match(/<p>([\\s\\S]*?)<\\/p>/) || [, ''])[1].replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');\nconst excerpt = firstP.length <= 160 ? firstP : firstP.slice(0, 157).replace(/\\s+\\S*$/, '') + '...';\nconst KW = { 'AI': /\\b(ai|llm|model|machine learning|neural|gpt|agent)\\b/i, 'Security': /\\b(security|vulnerab|exploit|malware|breach|cve|attack)\\b/i,\n  'Software': /\\b(software|programming|code|developer|compiler|language|database|rust|python|javascript|typescript|golang|cargo|api)\\b/i, 'Infrastructure': /\\b(cloud|kubernetes|server|network|linux|infrastructure)\\b/i,\n  'Open Source': /\\bopen.source\\b/i, 'Privacy': /\\bprivacy\\b/i };\nconst tags = d.tags || (Object.keys(KW).filter(k => KW[k].test(title + ' ' + d.topic)).slice(0, 4));\nif (!tags.length) tags.push('Technology');\nconst payload = { slug, title, date: today, excerpt, tags, readingTime: Math.max(1, Math.min(999, Math.ceil(d.wordCount / 200))),\n  qualityScore: d.quality_score, content, sources: d.sources,\n  editorNotes: { topic: d.topic, kind: d.kind, wordCount: d.wordCount, sectionCount: d.sectionCount, model: 'qwq:32b',\n    writer: d.writer, editor: d.editorNote, linksRemoved: d.linksRemoved, issues: d.issues.map(i => i.type), generatedAt: d.timestamp } };\nreturn [{ json: { payload, run: d.run, kind: d.kind, blockers: d.blockers, wouldPublish: d.wouldPublish } }];\n"
+      }
+    },
+    {
+      "id": "Dry Run?",
+      "name": "Dry Run?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        900,
+        100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "Dry Run?",
+              "leftValue": "={{ $json.run.dryRun === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "Dry Run Report",
+      "name": "Dry Run Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconsole.log('Agent 5: DRY RUN - publish to the blog API and the Telegram announcement were SKIPPED on purpose.');\nconsole.log('Agent 5:', d.wouldPublish ? 'WOULD PUBLISH' : 'WOULD HOLD (not publish): ' + d.blockers.join('; '), '| slug', d.payload.slug, '| title:', d.payload.title, '| words:', d.payload.editorNotes.wordCount);\nreturn [{ json: { dryRun: 'publish and Telegram announcement skipped', wouldPublish: d.wouldPublish, blockers: d.blockers,\n  issues: d.payload.editorNotes.issues, slug: d.payload.slug, title: d.payload.title,\n  excerpt: d.payload.excerpt, words: d.payload.editorNotes.wordCount, quality: d.payload.qualityScore, tags: d.payload.tags,\n  sources: d.payload.sources.length, editor: d.payload.editorNotes.editor, contentPreview: d.payload.content.slice(0, 1500), run: d.run } }];\n"
+      }
+    },
+    {
+      "id": "Mark Run Done (dry run)",
+      "name": "Mark Run Done (dry run)",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "alwaysOutputData": true,
+      "position": [
+        1340,
+        -100
+      ],
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "value": "{{ DATA_TABLE: blog_runs }}",
+          "mode": "list",
+          "cachedResultName": "blog_runs"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "dry-run-done",
+            "finished_at": "={{ new Date().toISOString() }}",
+            "detail": "={{ ($json.wouldPublish ? 'would publish: ' : 'would HOLD (' + $json.blockers.join('; ').slice(0, 150) + '): ') + $json.title }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "finished_at",
+              "displayName": "finished_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "detail",
+              "displayName": "detail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {},
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "run_id",
+              "condition": "eq",
+              "keyValue": "={{ $json.run.runId }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "Publish Gate",
+      "name": "Publish Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        260
+      ],
+      "parameters": {
+        "jsCode": "// Fix for 'publish never blocked': a post with blockers is HELD. Throwing sends one alert through the error workflow\n// (which marks the run 'held' and, for a scheduled run, may try again later). The draft stays in this execution's data.\nconst d = $input.first().json;\nif (d.blockers && d.blockers.length) throw new Error('Post held, not published: ' + d.blockers.join('; ').slice(0, 200));\nreturn [{ json: d }];\n"
+      }
+    },
+    {
+      "id": "Get Day's Runs",
+      "name": "Get Day's Runs",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "position": [
+        1120,
+        460
+      ],
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "{{ DATA_TABLE: blog_runs }}",
+          "mode": "list",
+          "cachedResultName": "blog_runs"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "day",
+              "condition": "eq",
+              "keyValue": "={{ ($json.run).day || $now.setZone('UTC').toISODate() }}"
+            }
+          ]
+        },
+        "options": {},
+        "returnAll": true
+      }
+    },
+    {
+      "id": "Day Already Published?",
+      "name": "Day Already Published?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1230,
+        460
+      ],
+      "parameters": {
+        "jsCode": "function dayDone(run, rows, today) {\n  run = run || {};\n  const SLOT = ['scheduled', 'retry'];\n  const dry = run.dryRun === true;\n  const day = run.day || today;\n  const same = (rows || []).filter(r => r && r.run_id && r.day === day && ((r.dry_run === true || r.dry_run === 'true') === dry));\n  const own = same.find(r => r.run_id === run.runId);\n  if (own && own.status === 'published')\n    return { skip: true, reason: `run ${run.runId} was already published (${own.post_url || 'no url'})` };\n  if (SLOT.includes(run.mode)) {\n    const other = same.find(r => r.run_id !== run.runId && SLOT.includes(r.mode) && r.status === 'published');\n    if (other) return { skip: true, reason: `the post for ${day} is already out (${other.post_url || other.run_id}, run ${other.run_id})` };\n  }\n  return { skip: false, reason: '' };\n}\n\nconst g = $('Publish Gate').first().json;\nconst d = dayDone(g.run, $input.all().map(i => i.json), $now.setZone('UTC').toISODate());\nif (d.skip) console.log('Agent 5: NOT publishing,', d.reason);\nreturn [{ json: { ...g, skipPublish: d.skip, skipReason: d.reason } }];\n"
+      }
+    },
+    {
+      "id": "Publish?",
+      "name": "Publish?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        460
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "Publish?",
+              "leftValue": "={{ $json.skipPublish }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals",
+                "singleValue": false
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "Mark Run Skipped",
+      "name": "Mark Run Skipped",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "position": [
+        1560,
+        620
+      ],
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "value": "{{ DATA_TABLE: blog_runs }}",
+          "mode": "list",
+          "cachedResultName": "blog_runs"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "skipped",
+            "finished_at": "={{ new Date().toISOString() }}",
+            "detail": "={{ $json.skipReason.slice(0, 250) }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "finished_at",
+              "displayName": "finished_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "detail",
+              "displayName": "detail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {},
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "run_id",
+              "condition": "eq",
+              "keyValue": "={{ $json.run.runId }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "Release Queue Item",
+      "name": "Release Queue Item",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "position": [
+        1780,
+        620
+      ],
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "value": "{{ DATA_TABLE: blog_topic_queue }}",
+          "mode": "list",
+          "cachedResultName": "blog_topic_queue"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "pending"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {},
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Day Already Published?').first().json.run.queueId || -1 }}"
+            },
+            {
+              "keyName": "status",
+              "condition": "eq",
+              "keyValue": "processing"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "Publish to Blog API",
+      "name": "Publish to Blog API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "position": [
+        1340,
+        260
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://your-blog.example/api/blog/posts",
+        "options": {
+          "timeout": 30000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.BLOG_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "Check Publish Response",
+      "name": "Check Publish Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        260
+      ],
+      "parameters": {
+        "jsCode": "const r = $input.first().json || {};\nconst prep = $('Convert MD to HTML & Prep Payload').first().json;\nconst slug = (r.post && r.post.slug) || null;\nif (!slug) throw new Error('Blog API did not confirm the post: ' + JSON.stringify(r).slice(0, 200));\nconst url = `https://your-blog.example/blog/${slug}`;\nconsole.log('Agent 5: published', url, r.updated ? '(UPDATED existing slug)' : '(new)');\nreturn [{ json: { slug, url, title: prep.payload.title, excerpt: prep.payload.excerpt, run: prep.run, kind: prep.kind,\n  wordCount: prep.payload.editorNotes.wordCount, qualityScore: prep.payload.qualityScore, readingTime: prep.payload.readingTime } }];\n"
+      }
+    },
+    {
+      "id": "Mark Run Published",
+      "name": "Mark Run Published",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "alwaysOutputData": true,
+      "position": [
+        1780,
+        260
+      ],
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "value": "{{ DATA_TABLE: blog_runs }}",
+          "mode": "list",
+          "cachedResultName": "blog_runs"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "published",
+            "finished_at": "={{ new Date().toISOString() }}",
+            "post_url": "={{ $json.url }}",
+            "detail": "={{ $json.title }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "finished_at",
+              "displayName": "finished_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "post_url",
+              "displayName": "post_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "detail",
+              "displayName": "detail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {},
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "run_id",
+              "condition": "eq",
+              "keyValue": "={{ $json.run.runId }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "Mark Queue Item Done",
+      "name": "Mark Queue Item Done",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "position": [
+        2000,
+        100
+      ],
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "value": "{{ DATA_TABLE: blog_topic_queue }}",
+          "mode": "list",
+          "cachedResultName": "blog_topic_queue"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "done"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {},
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Check Publish Response').first().json.run.queueId || -1 }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "Build Notification Message",
+      "name": "Build Notification Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2220,
+        100
+      ],
+      "parameters": {
+        "jsCode": "const p = $('Check Publish Response').first().json;\nconst head = p.kind === 'digest' ? 'Weekly digest published' : 'New post published';\nconst text = `${head}: ${p.title}\\n\\n${p.excerpt}\\n\\n${p.wordCount} words, about ${p.readingTime} min.\\n${p.url}\\n(The page goes live at the next site rebuild, within 6 hours.)`;\nreturn [{ json: { text } }];\n"
+      }
+    },
+    {
+      "id": "Send Telegram Notification",
+      "name": "Send Telegram Notification",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2440,
+        100
+      ],
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ String($json.text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "{{ CREDENTIAL: Telegram bot }}"
+        }
+      }
+    },
+    {
+      "id": "Hand to X Poster",
+      "name": "Hand to X Poster",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2220,
+        -80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://your-n8n.example/webhook/blog-x-poster",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { title: $('Check Publish Response').first().json.title, excerpt: $('Check Publish Response').first().json.excerpt, url: $('Check Publish Response').first().json.url, kind: $('Check Publish Response').first().json.kind, waitSeconds: 360 } }}"
+      }
+    },
+    {
+      "id": "Real Post? (not digest)",
+      "name": "Real Post? (not digest)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "Real Post? (not digest)",
+              "leftValue": "={{ $('Check Publish Response').first().json.kind !== 'digest' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "Note Execution on Run",
+      "name": "Note Execution on Run",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "position": [
+        240,
+        -100
+      ],
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "value": "{{ DATA_TABLE: blog_runs }}",
+          "mode": "list",
+          "cachedResultName": "blog_runs"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "last_exec": "={{ $execution.id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "last_exec",
+              "displayName": "last_exec",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {},
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "run_id",
+              "condition": "eq",
+              "keyValue": "={{ $json.run.runId || '-' }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "Prep Validation Failures",
+      "name": "Prep Validation Failures",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2220,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const d = $('Validate Quality').first().json, p = $('Check Publish Response').first().json;\nreturn d.issues.map(i => ({ json: { issue_type: i.type, severity: i.severity, message: i.message, topic: d.topic, word_count: d.wordCount,\n  quality_score: d.quality_score, timestamp: d.timestamp, post_title: p.title } }));\n"
+      }
+    },
+    {
+      "id": "Insert Validation Failures",
+      "name": "Insert Validation Failures",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "position": [
+        2440,
+        300
+      ],
+      "parameters": {
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "value": "{{ DATA_TABLE: blog_validation_failures }}",
+          "mode": "list",
+          "cachedResultName": "blog_validation_failures"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "issue_type": "={{ $json.issue_type }}",
+            "severity": "={{ $json.severity }}",
+            "message": "={{ $json.message }}",
+            "topic": "={{ $json.topic }}",
+            "word_count": "={{ $json.word_count }}",
+            "quality_score": "={{ $json.quality_score }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "post_title": "={{ $json.post_title }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "issue_type",
+              "displayName": "issue_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "severity",
+              "displayName": "severity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "message",
+              "displayName": "message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "topic",
+              "displayName": "topic",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "word_count",
+              "displayName": "word_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "quality_score",
+              "displayName": "quality_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "post_title",
+              "displayName": "post_title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "Insert Quality Metrics",
+      "name": "Insert Quality Metrics",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "position": [
+        2220,
+        480
+      ],
+      "parameters": {
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "value": "{{ DATA_TABLE: blog_quality_metrics }}",
+          "mode": "list",
+          "cachedResultName": "blog_quality_metrics"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "topic": "={{ $('Validate Quality').first().json.topic }}",
+            "style": "={{ $('Validate Quality').first().json.style }}",
+            "length": "={{ $('Validate Quality').first().json.length }}",
+            "quality_score": "={{ $('Validate Quality').first().json.quality_score }}",
+            "word_count": "={{ $('Validate Quality').first().json.wordCount }}",
+            "section_count": "={{ $('Validate Quality').first().json.sectionCount }}",
+            "retry_count": "={{ 0 }}",
+            "timestamp": "={{ $('Validate Quality').first().json.timestamp }}",
+            "post_title": "={{ $('Check Publish Response').first().json.title }}",
+            "post_slug": "={{ $('Check Publish Response').first().json.slug }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "topic",
+              "displayName": "topic",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "style",
+              "displayName": "style",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "length",
+              "displayName": "length",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "quality_score",
+              "displayName": "quality_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "word_count",
+              "displayName": "word_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "section_count",
+              "displayName": "section_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "retry_count",
+              "displayName": "retry_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "post_title",
+              "displayName": "post_title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "post_slug",
+              "displayName": "post_slug",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "Prep Topic Performance",
+      "name": "Prep Topic Performance",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2220,
+        660
+      ],
+      "parameters": {
+        "jsCode": "const d = $('Validate Quality').first().json;\nconst cats = ['AI', 'security', 'crypto', 'automation', 'infrastructure', 'software'];\nconst category = cats.find(c => String(d.topic).toLowerCase().includes(c.toLowerCase())) || 'tech';\nreturn [{ json: { category, quality_score: d.quality_score, retry_count: 0, timestamp: d.timestamp } }];\n"
+      }
+    },
+    {
+      "id": "Upsert Topic Performance",
+      "name": "Upsert Topic Performance",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "position": [
+        2440,
+        660
+      ],
+      "parameters": {
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "value": "{{ DATA_TABLE: blog_topic_performance }}",
+          "mode": "list",
+          "cachedResultName": "blog_topic_performance"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "category": "={{ $json.category }}",
+            "quality_score": "={{ $json.quality_score }}",
+            "retry_count": "={{ $json.retry_count }}",
+            "timestamp": "={{ $json.timestamp }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "category",
+              "displayName": "category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "quality_score",
+              "displayName": "quality_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "retry_count",
+              "displayName": "retry_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {},
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "category",
+              "condition": "eq",
+              "keyValue": "={{ $json.category }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "Prep Source Reliability",
+      "name": "Prep Source Reliability",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2220,
+        840
+      ],
+      "parameters": {
+        "jsCode": "const d = $('Validate Quality').first().json;\nconst seen = new Set();\nreturn d.sources.map(s => (String(s.url).match(/^https?:\\/\\/([^\\/]+)/) || [])[1]).filter(x => x && !seen.has(x) && seen.add(x))\n  .map(domain => ({ json: { domain, quality_score: d.quality_score, timestamp: d.timestamp } }));\n"
+      }
+    },
+    {
+      "id": "Upsert Source Reliability",
+      "name": "Upsert Source Reliability",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "position": [
+        2440,
+        840
+      ],
+      "parameters": {
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "value": "{{ DATA_TABLE: blog_source_reliability }}",
+          "mode": "list",
+          "cachedResultName": "blog_source_reliability"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "domain": "={{ $json.domain }}",
+            "quality_score": "={{ $json.quality_score }}",
+            "timestamp": "={{ $json.timestamp }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "domain",
+              "displayName": "domain",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "quality_score",
+              "displayName": "quality_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {},
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "domain",
+              "condition": "eq",
+              "keyValue": "={{ $json.domain }}"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Input": {
+      "main": [
+        [
+          {
+            "node": "Clean Links & Add Sources",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Note Execution on Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean Links & Add Sources": {
+      "main": [
+        [
+          {
+            "node": "Validate Quality",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Quality": {
+      "main": [
+        [
+          {
+            "node": "Convert MD to HTML & Prep Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert MD to HTML & Prep Payload": {
+      "main": [
+        [
+          {
+            "node": "Dry Run?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dry Run?": {
+      "main": [
+        [
+          {
+            "node": "Dry Run Report",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publish Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dry Run Report": {
+      "main": [
+        [
+          {
+            "node": "Mark Run Done (dry run)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish Gate": {
+      "main": [
+        [
+          {
+            "node": "Get Day's Runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Day's Runs": {
+      "main": [
+        [
+          {
+            "node": "Day Already Published?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Day Already Published?": {
+      "main": [
+        [
+          {
+            "node": "Publish?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish?": {
+      "main": [
+        [
+          {
+            "node": "Publish to Blog API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Run Skipped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Run Skipped": {
+      "main": [
+        [
+          {
+            "node": "Release Queue Item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish to Blog API": {
+      "main": [
+        [
+          {
+            "node": "Check Publish Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Publish Response": {
+      "main": [
+        [
+          {
+            "node": "Mark Run Published",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Run Published": {
+      "main": [
+        [
+          {
+            "node": "Mark Queue Item Done",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Real Post? (not digest)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Queue Item Done": {
+      "main": [
+        [
+          {
+            "node": "Build Notification Message",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Hand to X Poster",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Notification Message": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Real Post? (not digest)": {
+      "main": [
+        [
+          {
+            "node": "Prep Validation Failures",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Insert Quality Metrics",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prep Topic Performance",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prep Source Reliability",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Validation Failures": {
+      "main": [
+        [
+          {
+            "node": "Insert Validation Failures",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Topic Performance": {
+      "main": [
+        [
+          {
+            "node": "Upsert Topic Performance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Source Reliability": {
+      "main": [
+        [
+          {
+            "node": "Upsert Source Reliability",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "errorWorkflow": "REPLACE_WITH_ID_OF: Blog Pipeline Error Alerts",
+    "timezone": "UTC",
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

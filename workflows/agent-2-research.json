@@ -1,0 +1,677 @@
+{
+  "name": "PHASE 5: Agent 2 (With Search)",
+  "nodes": [
+    {
+      "id": "Sticky Note",
+      "name": "Sticky Note",
+      "parameters": {
+        "content": "## Agent 2: research\nStarted by Agent 1 (POST /webhook/blog-agent-2, answers at once, 'accepted'). Fetches the source page, SerpApi (3 tries), and the top 3 results (2 tries each; failures skipped). Fails the run only if there is no research at all. Carries `run` (runId, mode, dryRun) to Agent 3.\n\n**Dry run:** start from Agent 1 with `{\"dryRun\": true}`.",
+        "height": 260,
+        "width": 560
+      },
+      "position": [
+        -420,
+        -420
+      ],
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1
+    },
+    {
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "parameters": {
+        "httpMethod": "POST",
+        "options": {},
+        "path": "blog-agent-2",
+        "responseMode": "onReceived"
+      },
+      "position": [
+        240,
+        400
+      ],
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2
+    },
+    {
+      "id": "parse-input",
+      "name": "Parse Input",
+      "parameters": {
+        "jsCode": "\nconst input = $input.first().json;\nconst data = input.body || input;\nconst run = data.run || { runId: 'unknown', mode: 'manual', dryRun: false };\nconst url = String(data.url || '').trim();\nconst topic = String(data.topic || '').trim();\nconsole.log('Agent 2: run', run.runId, run.dryRun ? '(DRY RUN)' : '', '| topic:', topic || '(from page title)', '| url:', url || '-');\nreturn [{ json: { topic, url, style: data.style, length: data.length, angle: data.angle,\n  searchQuery: topic || url, hasSourceUrl: /^https?:\\/\\//.test(url), chosenBecause: data.chosenBecause || '', run } }];\n"
+      },
+      "position": [
+        460,
+        400
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "id": "check-source-url",
+      "name": "Has Source URL?",
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "has-source-url",
+              "leftValue": "={{ $json.hasSourceUrl }}",
+              "operator": {
+                "operation": "equals",
+                "type": "boolean"
+              },
+              "rightValue": true
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          }
+        },
+        "options": {}
+      },
+      "position": [
+        680,
+        400
+      ],
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2
+    },
+    {
+      "id": "fetch-source-url",
+      "maxTries": 3,
+      "name": "Fetch Source URL",
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "blog-bot/1.0 (+https://your-blog.example/blog)"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 15000
+        },
+        "sendHeaders": true,
+        "url": "={{ ($('Parse Input').first().json.run.dryRun && ($('Parse Input').first().json.run.testBreak || []).includes('source-page')) ? 'https://your-blog.example/api/__test_broken_page' : $json.url }}"
+      },
+      "position": [
+        900,
+        300
+      ],
+      "retryOnFail": true,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "extract-source-content",
+      "name": "Extract Source Content",
+      "parameters": {
+        "jsCode": "const html = $input.first().json.data || $input.first().json || '';\nconst parseData = $(\"Parse Input\").first().json;\n\n// Convert HTML to plain text\nfunction htmlToText(html) {\n  if (typeof html !== 'string') return '';\n  \n  let text = html;\n  \n  // Remove script and style tags with content\n  text = text.replace(/<script[^>]*>[\\s\\S]*?<\\/script>/gi, '');\n  text = text.replace(/<style[^>]*>[\\s\\S]*?<\\/style>/gi, '');\n  text = text.replace(/<nav[^>]*>[\\s\\S]*?<\\/nav>/gi, '');\n  text = text.replace(/<header[^>]*>[\\s\\S]*?<\\/header>/gi, '');\n  text = text.replace(/<footer[^>]*>[\\s\\S]*?<\\/footer>/gi, '');\n  \n  // Replace common block elements with newlines\n  text = text.replace(/<\\/(p|div|h[1-6]|li|tr|br)[^>]*>/gi, '\\n');\n  text = text.replace(/<br[^>]*>/gi, '\\n');\n  \n  // Remove all remaining HTML tags\n  text = text.replace(/<[^>]+>/g, ' ');\n  \n  // Decode HTML entities\n  text = text.replace(/&nbsp;/g, ' ');\n  text = text.replace(/&amp;/g, '&');\n  text = text.replace(/&lt;/g, '<');\n  text = text.replace(/&gt;/g, '>');\n  text = text.replace(/&quot;/g, '\"');\n  text = text.replace(/&#39;/g, \"'\");\n  \n  // Clean up whitespace\n  text = text.replace(/\\s+/g, ' ');\n  text = text.replace(/\\n\\s*\\n/g, '\\n\\n');\n  text = text.trim();\n  \n  // Limit length to avoid token limits\n  if (text.length > 8000) {\n    text = text.substring(0, 8000) + '...';\n  }\n  \n  return text;\n}\n\nconst sourceContent = htmlToText(html);\n// URL-only topics (e.g. a bare link sent to the inbox) take their title from the page.\nlet pageTitle = '';\nif (typeof html === 'string') { const m = html.match(/<title[^>]*>([\\s\\S]*?)<\\/title>/i); if (m) pageTitle = m[1].replace(/\\s+/g, ' ').replace(/&amp;/g, '&').trim().slice(0, 200); }\nif (!parseData.topic || /^https?:/.test(parseData.topic)) { parseData.topic = pageTitle || parseData.topic; parseData.searchQuery = parseData.topic; }\nconsole.log('✅ Agent 2: Extracted', sourceContent.length, 'chars from source URL');\n\nreturn [{\n  json: {\n    ...parseData,\n    sourceContent: sourceContent,\n    sourceUrl: parseData.url\n  }\n}];"
+      },
+      "position": [
+        1120,
+        300
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "id": "no-source-content",
+      "name": "No Source Content",
+      "parameters": {
+        "jsCode": "// No source URL, just pass through with empty sourceContent\nconst parseData = $(\"Parse Input\").first().json;\n\nreturn [{\n  json: {\n    ...parseData,\n    sourceContent: '',\n    sourceUrl: ''\n  }\n}];"
+      },
+      "position": [
+        900,
+        500
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "credentials": {
+        "serpApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "{{ CREDENTIAL: SerpApi }}"
+        }
+      },
+      "id": "search",
+      "maxTries": 3,
+      "name": "SerpApi Search",
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "serpApi",
+        "options": {
+          "timeout": 30000
+        },
+        "url": "=https://serpapi.com/search?engine={{ ($('Parse Input').first().json.run.dryRun && ($('Parse Input').first().json.run.testBreak || []).includes('serpapi')) ? 'blogv2_test_invalid_engine' : 'google' }}&q={{ encodeURIComponent($json.searchQuery) }}&api_key={{ $credentials.serpApi.apiKey }}&num=5"
+      },
+      "position": [
+        1340,
+        400
+      ],
+      "retryOnFail": true,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "parse-results",
+      "name": "Parse Search Results",
+      "parameters": {
+        "jsCode": "const inputData = $input.first().json;\nconst serpResults = Array.isArray(inputData.organic_results) ? inputData.organic_results : [];\nif (inputData.error) console.log('Agent 2: SerpApi failed after retries, continuing with the source page only:', String(inputData.error.message || inputData.error).slice(0, 200));\n\n// Get source data from whichever path executed\nlet sourceData;\ntry {\n  sourceData = $(\"Extract Source Content\").first()?.json;\n} catch(e) {\n  sourceData = null;\n}\nif (!sourceData) {\n  try {\n    sourceData = $(\"No Source Content\").first()?.json;\n  } catch(e) {\n    sourceData = $(\"Parse Input\").first().json;\n  }\n}\n\nconst sources = [];\nconst snippets = [];\nconst urlsToFetch = [];\n\nfor (let i = 0; i < Math.min(serpResults.length, 5); i++) {\n  const result = serpResults[i];\n  if (result.link && result.title) {\n    sources.push({\n      url: result.link,\n      title: result.title\n    });\n    // Only fetch top 3 for deeper content\n    if (i < 3 && result.link) {\n      urlsToFetch.push(result.link);\n    }\n  }\n  if (result.snippet) {\n    snippets.push(`${result.title}: ${result.snippet}`);\n  }\n}\n\nconsole.log('✅ Agent 2: Found', sources.length, 'sources,', urlsToFetch.length, 'to fetch deeply');\n\nreturn [{\n  json: {\n    sources: sources,\n    snippets: snippets,\n    urlsToFetch: urlsToFetch,\n    topic: sourceData.topic,\n    style: sourceData.style,\n    length: sourceData.length,\n    angle: sourceData.angle,\n    sourceContent: sourceData.sourceContent || '',\n    sourceUrl: sourceData.sourceUrl || '',\n    run: sourceData.run\n  }\n}];"
+      },
+      "position": [
+        1560,
+        400
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "id": "split-urls",
+      "name": "Split URLs to Fetch",
+      "parameters": {
+        "jsCode": "// Split URLs for fetching\nconst data = $input.first().json;\nconst urls = data.urlsToFetch || [];\n\nif (urls.length === 0) {\n  // No URLs to fetch, pass through with empty fetchedContent\n  return [{\n    json: {\n      ...data,\n      fetchedContent: [],\n      hasUrlsToFetch: false\n    }\n  }];\n}\n\n// Return each URL as separate item for fetching\nreturn urls.map((url, index) => ({\n  json: {\n    urlToFetch: url,\n    urlIndex: index,\n    originalData: data,\n    hasUrlsToFetch: true\n  }\n}));"
+      },
+      "position": [
+        1780,
+        400
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "id": "check-has-urls",
+      "name": "Has URLs to Fetch?",
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "has-urls-to-fetch",
+              "leftValue": "={{ $json.hasUrlsToFetch }}",
+              "operator": {
+                "operation": "equals",
+                "type": "boolean"
+              },
+              "rightValue": true
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          }
+        },
+        "options": {}
+      },
+      "position": [
+        2000,
+        400
+      ],
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2
+    },
+    {
+      "id": "fetch-search-urls",
+      "maxTries": 2,
+      "name": "Fetch Search Result URLs",
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "blog-bot/1.0 (+https://your-blog.example/blog)"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 10000
+        },
+        "sendHeaders": true,
+        "url": "={{ ($('Parse Input').first().json.run.dryRun && ($('Parse Input').first().json.run.testBreak || []).includes('articles')) ? 'https://your-blog.example/api/__test_broken_article' : $json.urlToFetch }}"
+      },
+      "position": [
+        2220,
+        300
+      ],
+      "retryOnFail": true,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "extract-fetched-content",
+      "name": "Extract Fetched Content",
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst splitData = $(\"Split URLs to Fetch\").all();\nconst results = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i];\n  const html = item.json.data || (typeof item.json === 'string' ? item.json : '') || '';\n  const urlData = splitData[i]?.json || {};\n  const urlToFetch = urlData.urlToFetch || '';\n  \n  // Convert HTML to plain text\n  function htmlToText(html) {\n    if (typeof html !== 'string') return '';\n    \n    let text = html;\n    \n    // Remove script and style tags with content\n    text = text.replace(/<script[^>]*>[\\s\\S]*?<\\/script>/gi, '');\n    text = text.replace(/<style[^>]*>[\\s\\S]*?<\\/style>/gi, '');\n    text = text.replace(/<nav[^>]*>[\\s\\S]*?<\\/nav>/gi, '');\n    text = text.replace(/<header[^>]*>[\\s\\S]*?<\\/header>/gi, '');\n    text = text.replace(/<footer[^>]*>[\\s\\S]*?<\\/footer>/gi, '');\n    \n    // Replace common block elements with newlines\n    text = text.replace(/<\\/(p|div|h[1-6]|li|tr|br)[^>]*>/gi, '\\n');\n    text = text.replace(/<br[^>]*>/gi, '\\n');\n    \n    // Remove all remaining HTML tags\n    text = text.replace(/<[^>]+>/g, ' ');\n    \n    // Decode HTML entities\n    text = text.replace(/&nbsp;/g, ' ');\n    text = text.replace(/&amp;/g, '&');\n    text = text.replace(/&lt;/g, '<');\n    text = text.replace(/&gt;/g, '>');\n    text = text.replace(/&quot;/g, '\"');\n    text = text.replace(/&#39;/g, \"'\");\n    \n    // Clean up whitespace\n    text = text.replace(/\\s+/g, ' ');\n    text = text.replace(/\\n\\s*\\n/g, '\\n\\n');\n    text = text.trim();\n    \n    // Limit length\n    if (text.length > 3000) {\n      text = text.substring(0, 3000) + '...';\n    }\n    \n    return text;\n  }\n  \n  const content = htmlToText(html);\n  if (content.length > 100) {\n    results.push({\n      url: urlToFetch,\n      content: content\n    });\n  }\n}\n\nconst originalData = splitData[0]?.json?.originalData || {};\n\nconsole.log('✅ Agent 2: Fetched content from', results.length, 'URLs');\n\nreturn [{\n  json: {\n    fetchedContent: results,\n    sources: originalData.sources || [],\n    snippets: originalData.snippets || [],\n    topic: originalData.topic,\n    style: originalData.style,\n    length: originalData.length,\n    angle: originalData.angle,\n    sourceContent: originalData.sourceContent || '',\n    sourceUrl: originalData.sourceUrl || '',\n    run: originalData.run\n  }\n}];"
+      },
+      "position": [
+        2440,
+        300
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "id": "no-urls-to-fetch",
+      "name": "No URLs to Fetch",
+      "parameters": {
+        "jsCode": "// No URLs to fetch path - just pass through\nconst data = $input.first().json;\n\nreturn [{\n  json: {\n    fetchedContent: [],\n    sources: data.sources || [],\n    snippets: data.snippets || [],\n    topic: data.topic,\n    style: data.style,\n    length: data.length,\n    angle: data.angle,\n    sourceContent: data.sourceContent || '',\n    sourceUrl: data.sourceUrl || '',\n    run: data.run\n  }\n}];"
+      },
+      "position": [
+        2220,
+        500
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "id": "build-research",
+      "name": "Build Enhanced Research",
+      "parameters": {
+        "jsCode": "\nlet data = null;\nif ($('Extract Fetched Content').isExecuted) data = $('Extract Fetched Content').first().json;\nif ((!data || !data.topic) && $('No URLs to Fetch').isExecuted) data = $('No URLs to Fetch').first().json;\nif (!data) throw new Error('No data received from either research path');\nconst run = data.run || {};\nif (run.dryRun && run.forceFailAt === 'agent2') throw new Error('Forced test failure in Agent 2 (dry run, on purpose)');\nconst topic = data.topic, sourceContent = data.sourceContent || '', sourceUrl = data.sourceUrl || '';\nconst snippets = data.snippets || [], fetched = data.fetchedContent || [];\nconst sources = [];\nif (sourceUrl && sourceContent.length > 100) sources.push({ url: sourceUrl, title: topic });\nfor (const s of (data.sources || [])) if (s && s.url && !sources.some(x => x.url === s.url)) sources.push(s);\nif (sourceContent.length <= 100 && !snippets.length && !fetched.length)\n  throw new Error('No research material: the source page and the search both came back empty');\n// Sized for qwq's 16k context: about 12,000 characters of research in total.\nlet r = `# Research on: ${topic}\\n\\n`;\nif (sourceContent.length > 100) r += `## Primary source\\nSource: ${sourceUrl}\\n\\n${sourceContent.slice(0, 5000)}\\n\\n`;\nif (snippets.length) r += `## Search result summaries\\n\\n` + snippets.map((s, i) => `${i + 1}. ${s}`).join('\\n\\n') + '\\n\\n';\nfor (const [i, f] of fetched.entries()) r += `## Source ${i + 1}: ${f.url}\\n\\n${String(f.content).slice(0, 2200)}\\n\\n`;\nif (r.length > 12000) r = r.slice(0, 12000) + '\\n\\n[research truncated]';\nconsole.log('Agent 2: research', r.length, 'chars | primary:', sourceContent.length > 100, '| snippets:', snippets.length, '| fetched:', fetched.length, '| sources:', sources.length);\nreturn [{ json: { researchSummary: r, sources, topic, style: data.style, length: data.length, angle: data.angle, run } }];\n"
+      },
+      "position": [
+        2660,
+        400
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "id": "call-agent-3",
+      "name": "Call Agent 3",
+      "parameters": {
+        "jsonBody": "={{ $json }}",
+        "method": "POST",
+        "options": {
+          "timeout": 15000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "https://your-n8n.example/webhook/blog-agent-3"
+      },
+      "position": [
+        3100,
+        500
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2
+    },
+    {
+      "alwaysOutputData": true,
+      "id": "Note Execution on Run",
+      "name": "Note Execution on Run",
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [],
+          "schema": [
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "last_exec",
+              "id": "last_exec",
+              "required": false,
+              "type": "string"
+            }
+          ],
+          "value": {
+            "last_exec": "={{ $execution.id }}"
+          }
+        },
+        "dataTableId": {
+          "__rl": true,
+          "cachedResultName": "blog_runs",
+          "mode": "list",
+          "value": "{{ DATA_TABLE: blog_runs }}"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "condition": "eq",
+              "keyName": "run_id",
+              "keyValue": "={{ $json.run.runId || '-' }}"
+            }
+          ]
+        },
+        "matchType": "allConditions",
+        "operation": "update",
+        "options": {}
+      },
+      "position": [
+        680,
+        160
+      ],
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1
+    },
+    {
+      "id": "Stop Here? (test)",
+      "name": "Stop Here? (test)",
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "Stop Here? (test)",
+              "leftValue": "={{ $('Parse Input').first().json.run.stopAfter === 'agent2' }}",
+              "operator": {
+                "operation": "true",
+                "singleValue": true,
+                "type": "boolean"
+              },
+              "rightValue": true
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          }
+        },
+        "options": {}
+      },
+      "position": [
+        2880,
+        400
+      ],
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2
+    },
+    {
+      "alwaysOutputData": true,
+      "id": "Mark Run Done (test stop)",
+      "name": "Mark Run Done (test stop)",
+      "parameters": {
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [],
+          "schema": [
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "status",
+              "id": "status",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "finished_at",
+              "id": "finished_at",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "canBeUsedToMatch": true,
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "detail",
+              "id": "detail",
+              "required": false,
+              "type": "string"
+            }
+          ],
+          "value": {
+            "detail": "stopped after Agent 2 (test)",
+            "finished_at": "={{ new Date().toISOString() }}",
+            "status": "dry-run-done"
+          }
+        },
+        "dataTableId": {
+          "__rl": true,
+          "cachedResultName": "blog_runs",
+          "mode": "list",
+          "value": "{{ DATA_TABLE: blog_runs }}"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "condition": "eq",
+              "keyName": "run_id",
+              "keyValue": "={{ $('Parse Input').first().json.run.runId }}"
+            }
+          ]
+        },
+        "matchType": "allConditions",
+        "operation": "update",
+        "options": {}
+      },
+      "position": [
+        3100,
+        300
+      ],
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1
+    }
+  ],
+  "connections": {
+    "Build Enhanced Research": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Stop Here? (test)",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Extract Fetched Content": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Build Enhanced Research",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Extract Source Content": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "SerpApi Search",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Fetch Search Result URLs": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Extract Fetched Content",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Fetch Source URL": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Extract Source Content",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Has Source URL?": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Fetch Source URL",
+            "type": "main"
+          }
+        ],
+        [
+          {
+            "index": 0,
+            "node": "No Source Content",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Has URLs to Fetch?": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Fetch Search Result URLs",
+            "type": "main"
+          }
+        ],
+        [
+          {
+            "index": 0,
+            "node": "No URLs to Fetch",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "No Source Content": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "SerpApi Search",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "No URLs to Fetch": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Build Enhanced Research",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Parse Input": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Note Execution on Run",
+            "type": "main"
+          },
+          {
+            "index": 0,
+            "node": "Has Source URL?",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Parse Search Results": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Split URLs to Fetch",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "SerpApi Search": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Parse Search Results",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Split URLs to Fetch": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Has URLs to Fetch?",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Stop Here? (test)": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Mark Run Done (test stop)",
+            "type": "main"
+          }
+        ],
+        [
+          {
+            "index": 0,
+            "node": "Call Agent 3",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Parse Input",
+            "type": "main"
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "REPLACE_WITH_ID_OF: Blog Pipeline Error Alerts",
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "timezone": "UTC"
+  }
+}

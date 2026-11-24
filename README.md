@@ -1,532 +1,216 @@
-# Automated AI Blog System
-
-A fully automated, 5-agent system that discovers trending topics, researches them, writes long-form blog posts, edits for quality, and publishes to your blog with intelligent learning capabilities.
-
-## 🚀 System Overview
-
-This system runs completely autonomously:
-1. **Agent 1** discovers trending tech topics from HackerNews (with duplicate detection)
-2. **Agent 2** researches topics using web search APIs
-3. **Agent 3** writes 2500-5000 word blog posts (learns from past failures)
-4. **Agent 4** edits for quality, grammar, and third-person journalistic style
-5. **Agent 5** validates, publishes to your blog API, and logs metrics for continuous learning
-
-## 🏗️ Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│             Automated Blog Generation Pipeline              │
-└─────────────────────────────────────────────────────────────┘
-
-Agent 1: Topic Discovery (Schedule Trigger - Daily)
-   ├─ Fetch HackerNews top 30 stories
-   ├─ Filter for AI/tech keywords
-   ├─ Check for duplicates (last 30 blog posts)
-   ├─ Enhanced duplicate detection (word + key entity overlap)
-   └─ Select unique topic → Agent 2
-        │
-        ↓
-Agent 2: Research (Webhook: /webhook/agent-2-research)
-   ├─ Search via SerpApi
-   ├─ Extract top 5 sources
-   └─ Synthesize research summary → Agent 3
-        │
-        ↓
-Agent 3: Writing (Webhook: /webhook/agent-3-writing)
-   ├─ Load Data Tables (validation failures, quality metrics)
-   ├─ Analyze learnings (common issues, quality benchmarks)
-   ├─ Build enhanced prompt with learnings
-   ├─ Write 2500-5000 word long-form post (third-person)
-   └─ Generate markdown → Agent 4
-        │
-        ↓
-Agent 4: Editing (Webhook: /webhook/agent-4-editing)
-   ├─ Review for grammar, clarity, and flow
-   ├─ Enforce third-person journalistic style
-   ├─ Expand content to meet 2500-5000 word target
-   └─ Output final edited post → Agent 5
-        │
-        ↓
-Agent 5: Publishing (Webhook: /webhook/agent-5-publishing)
-   ├─ Validate quality (word count, title, sections, POV)
-   ├─ Log validation failures to Data Tables (for Agent 3 learning)
-   ├─ Convert markdown to HTML
-   ├─ Generate SEO metadata (description, keywords)
-   ├─ Calculate quality score
-   ├─ Write quality metrics to Data Tables
-   ├─ Publish to Blog API
-   └─ Success! (Logs published post data)
-```
-
-## 📋 Key Features
-
-### Automated Topic Discovery
-- **HackerNews Integration**: Fetches top 30 trending stories daily
-- **Smart Filtering**: Filters for 35+ tech keywords (AI, blockchain, security, etc.)
-- **Duplicate Detection**: Two-pronged approach
-  - Word overlap check (40% threshold)
-  - Key entity overlap (2+ shared proper nouns/technical terms)
-- **Stops on All Duplicates**: Throws error if all topics are duplicates
-
-### Intelligent Learning System
-- **Agent 3 Learns from Past Failures**:
-  - Loads validation failures from Data Tables before writing
-  - Identifies common issues (e.g., word_count_low, first_person_language)
-  - Adjusts writing prompt with "COMMON ISSUES TO AVOID"
-  - Includes quality benchmarks from past posts
-- **Agent 5 Tracks Everything**:
-  - Logs all validation failures with severity levels
-  - Records quality metrics (word count, sections, scores)
-  - Monitors retry patterns
-  - Tracks source reliability
-  - Categories topic performance
-
-### Long-Form Content
-- **2500-5000 Word Posts**: Substantial, comprehensive articles
-- **Third-Person Journalistic Style**: Professional news analysis perspective
-- **Structured Content**: 6-10 main sections with subsections
-- **Enhanced Prompts**: Both Agent 3 and Agent 4 enforce long-form depth
-
-### Quality & SEO
-- **Real-Time Validation**: Checks title, word count, sections, first-person language
-- **Dynamic Quality Scoring**: 0-10 score based on multiple criteria
-- **SEO Metadata**: Auto-generates meta descriptions and keywords
-- **Severity Classification**: Critical, High, Medium issue levels
-
-## 📦 Files
-
-- `agent-1-topic-discovery.json` - Automated topic discovery with duplicate detection
-- `agent-2-research.json` - SerpApi research agent
-- `agent-3-writing.json` - Writing agent with Data Tables learning
-- `agent-4-editing.json` - Editing agent with long-form enforcement
-- `agent-5-publishing.json` - Publishing agent with validation, SEO, and Data Tables logging
+# Automated blog (n8n), v2
 
-## 🚀 Setup Instructions
+Exported n8n workflows for a blog that writes itself. Five agent workflows find a topic, research it, write a draft, edit it
+and publish it, once a day. Around them sit a weekly digest, an error alert workflow, an X poster and a daily ham radio band
+report built from NOAA space weather data with fixed rules.
 
-### Prerequisites
+These exports match the workflows that run in production as of November 2026. They were scrubbed before publishing:
+every instance id, credential, chat id, host and address is a placeholder. See [Placeholders](#placeholders).
 
-- **n8n instance** running (e.g., https://n8n.mabus.ai)
-- **Ollama** reachable from n8n (the exports use the placeholder `http://OLLAMA_HOST:11434`) with model `gpt-oss:20b`
-- **SerpApi account** with API key
-- **Blog API** at `https://mabus.ai/api/blog/posts` with Bearer token authentication
+Everything the pipeline publishes is written by AI. The site it runs for says so on every page.
 
-### Step 1: Create Data Tables (MANUAL)
-
-**IMPORTANT**: You must manually create these 3 Data Tables in n8n **before** importing the workflows.
+## What runs, and when
 
-Go to n8n → Data Tables → Create New Table:
-
-#### Table 1: `blog_validation_failures`
-
-Stores validation errors for Agent 3 to learn from.
-
-| Column Name    | Type     | Description                               |
-|---------------|----------|-------------------------------------------|
-| `id`          | Number   | Auto-increment primary key                |
-| `createdAt`   | DateTime | Timestamp of failure                      |
-| `post_title`  | String   | Title of the failed post                  |
-| `issue_type`  | String   | Type of issue (e.g., word_count_low)      |
-| `severity`    | String   | critical, high, medium                    |
-| `message`     | String   | Detailed error message                    |
-
-#### Table 2: `blog_quality_metrics`
-
-Stores quality scores and metrics for benchmarking.
-
-| Column Name      | Type     | Description                            |
-|-----------------|----------|----------------------------------------|
-| `id`            | Number   | Auto-increment primary key             |
-| `createdAt`     | DateTime | Timestamp of publication               |
-| `post_title`    | String   | Title of published post                |
-| `post_slug`     | String   | URL slug                               |
-| `word_count`    | Number   | Total word count                       |
-| `section_count` | Number   | Number of sections                     |
-| `quality_score` | Number   | Quality score (0-10)                   |
-
-#### Table 3: `blog_retry_patterns`
-
-Stores retry information for monitoring.
-
-| Column Name     | Type     | Description                             |
-|----------------|----------|-----------------------------------------|
-| `id`           | Number   | Auto-increment primary key              |
-| `createdAt`    | DateTime | Timestamp of retry                      |
-| `post_title`   | String   | Title of retried post                   |
-| `retry_count`  | Number   | Number of retries attempted             |
-| `final_status` | String   | success or failed                       |
-
-**Note**: These tables can be empty initially. They will populate as the system runs and learns from experience.
-
-### Step 2: Import Workflows
-
-Import all 5 workflows into n8n:
-1. `agent-1-topic-discovery.json`
-2. `agent-2-research.json`
-3. `agent-3-writing.json`
-4. `agent-4-editing.json`
-5. `agent-5-publishing.json`
-
-### Step 3: Configure Agent 3 Data Table Nodes (MANUAL)
-
-**Agent 3** has 3 Data Table nodes that need manual configuration after import.
-
-Open **Agent 3** workflow and configure these nodes:
-
-#### Node: "Get Validation Failures"
-- **Operation**: Get
-- **Table**: Select `blog_validation_failures` from dropdown
-- **Options** → **Limit**: 100
-- **Options** → **Sort**:
-  - Field Name: `createdAt`
-  - Order: DESC
-
-#### Node: "Get Quality Metrics"
-- **Operation**: Get
-- **Table**: Select `blog_quality_metrics` from dropdown
-- **Options** → **Limit**: 100
-- **Options** → **Sort**:
-  - Field Name: `createdAt`
-  - Order: DESC
-
-#### Node: "Get Retry Patterns"
-- **Operation**: Get
-- **Table**: Select `blog_retry_patterns` from dropdown
-- **Options** → **Limit**: 100
-- **Options** → **Sort**:
-  - Field Name: `createdAt`
-  - Order: DESC
-
-### Step 4: Configure Agent 5 Data Table Nodes (MANUAL)
-
-**Agent 5** has 3 Data Table nodes that need manual configuration after import.
-
-Open **Agent 5** workflow and configure these nodes:
-
-#### Node: "Log Validation Failure"
-- **Operation**: Insert
-- **Table**: Select `blog_validation_failures` from dropdown
-- **Data Mode**: Define Below
-- **Fields to Send**:
-  - `createdAt` = `{{ $now.toISO() }}`
-  - `post_title` = `{{ $json.topic }}`
-  - `issue_type` = `{{ $json.issue }}`
-  - `severity` = `{{ $json.severity }}`
-  - `message` = `{{ $json.message }}`
-
-#### Node: "Write Quality Metrics"
-- **Operation**: Insert
-- **Table**: Select `blog_quality_metrics` from dropdown
-- **Data Mode**: Define Below
-- **Fields to Send**:
-  - `createdAt` = `{{ $now.toISO() }}`
-  - `post_title` = `{{ $json.title }}`
-  - `post_slug` = `{{ $json.slug }}`
-  - `word_count` = `{{ $json.wordCount }}`
-  - `section_count` = `{{ $json.sectionCount }}`
-  - `quality_score` = `{{ $json.qualityScore }}`
-
-#### Node: "Write Retry Pattern"
-- **Operation**: Insert
-- **Table**: Select `blog_retry_patterns` from dropdown
-- **Data Mode**: Define Below
-- **Fields to Send**:
-  - `createdAt` = `{{ $now.toISO() }}`
-  - `post_title` = `{{ $json.topic }}`
-  - `retry_count` = `{{ $json.retryCount }}`
-  - `final_status` = `{{ $json.status }}`
-
-**Conditions Node: "Should Retry?"**
-
-This node checks if the post failed validation and should retry:
-- **IF**: `{{ $json.validationPassed }}` equals `false`
-- **AND**: `{{ $json.retryCount }}` is less than `3`
-- **THEN**: Route to retry (Agent 3)
-- **ELSE**: Route to error logging
-
-### Step 5: Configure Credentials
-
-#### SerpApi (Agent 2)
-1. Go to Agent 2 → "Search SerpApi" node
-2. Add SerpApi credential with your API key
-
-#### Blog API (Agent 5)
-1. Set environment variable: `BLOG_API_KEY=your_bearer_token`
-2. Verify Agent 5 → "Publish to Blog API" node uses:
-   ```
-   Authorization: Bearer {{ $env.BLOG_API_KEY }}
-   ```
-
-#### Ollama (All Agents)
-- Set all Ollama HTTP Request nodes to your Ollama URL (placeholder in the exports: `http://OLLAMA_HOST:11434`)
-- Model: `gpt-oss:20b`
-- If your Ollama is at a different URL, update all nodes
-
-### Step 6: Configure Webhook URLs
-
-Update webhook URLs in each agent's "Call Agent X" node:
-
-**Agent 1** → "Call Agent 2":
-```
-https://n8n.mabus.ai/webhook/agent-2-research
-```
-
-**Agent 2** → "Call Agent 3":
-```
-https://n8n.mabus.ai/webhook/agent-3-writing
-```
-
-**Agent 3** → "Call Agent 4":
-```
-https://n8n.mabus.ai/webhook/agent-4-editing
-```
-
-**Agent 4** → "Call Agent 5":
-```
-https://n8n.mabus.ai/webhook/agent-5-publishing
-```
-
-Replace `n8n.mabus.ai` with your actual n8n instance URL.
+Times are UTC (the workflow timezone). Change it in each workflow's settings and in the Code nodes that call
+`setZone('UTC')`.
 
-### Step 7: Set Schedule (Agent 1)
+| File                                             | Workflow name in n8n                         | Trigger                              | What it does                 |
+| ------------------------------------------------ | -------------------------------------------- | ------------------------------------ | ---------------------------- |
+| `workflows/agent-1-topic-discovery.json`         | PHASE 5: Agent 1 (Automated Topic Discovery) | daily 13:00, or another workflow     | Picks one topic              |
+| `workflows/agent-2-research.json`                | PHASE 5: Agent 2 (With Search)               | webhook from Agent 1                 | Searches and reads sources   |
+| `workflows/agent-3-writer.json`                  | PHASE 5: Agent 3 (With Data Tables)          | webhook from Agent 2                 | Writes the draft             |
+| `workflows/agent-4-editor.json`                  | PHASE 5: Agent 4 (With Ollama)               | webhook from Agent 3                 | Edits the draft              |
+| `workflows/agent-5-publisher.json`               | PHASE 5: Agent 5 (With Publishing)           | webhook from Agent 4 or the digest   | Checks, publishes, announces |
+| `workflows/blog-weekly-digest.json`              | Blog Weekly Digest                           | Sundays 10:00                        | A digest post of the week    |
+| `workflows/blog-pipeline-error-alerts.json`      | Blog Pipeline Error Alerts                   | error workflow of all the others     | Alerts, marks runs, retries  |
+| `workflows/blog-post-to-x.json`                  | Blog Post to X                               | webhook from Agent 5 and the ham job | One post on X per item       |
+| `workflows/ham-radio-band-conditions-daily.json` | Ham Radio Band Conditions (daily)            | daily 06:00                          | Band report, no model        |
 
-In **Agent 1**, configure the "Schedule Trigger" node:
-- **Default**: Runs every 24 hours (daily)
-- **Recommended**: Set to run at 8 AM your timezone
-- Example cron: `0 8 * * *` (8 AM daily)
+The agents hand off over webhooks. Each webhook answers at once, so one agent does not wait on the next. A `run` object
+(run id, mode, day, dry run flag) travels with the payload from Agent 1 to Agent 5.
 
-### Step 8: Activate Workflows
-
-Activate workflows in **reverse order** (so webhooks are ready):
-
-1. ✅ Agent 5 (Publishing)
-2. ✅ Agent 4 (Editing)
-3. ✅ Agent 3 (Writing)
-4. ✅ Agent 2 (Research)
-5. ✅ Agent 1 (Topic Discovery)
-
-## 🧪 Testing
-
-### Manual Test (Start from Agent 2)
-
-Skip topic discovery and test the core pipeline:
+## The five agents
 
-```bash
-curl -X POST https://n8n.mabus.ai/webhook/agent-2-research \
-  -H "Content-Type: application/json" \
-  -d '{
-    "topic": "The Rise of AI Agents in 2026",
-    "url": "https://example.com/article",
-    "style": "accessible-explanation",
-    "length": "long",
-    "angle": "general overview"
-  }'
-```
+### Agent 1: topic discovery
 
-### Full Automated Test
+- Reads `blog_system_state`. If `is_paused` is true, it stops.
+- Reads `blog_runs` for today. If today's scheduled post is already out, it marks the run `skipped` and stops quietly.
+- Takes the front of `blog_topic_queue` first (highest priority, then oldest). In the author's setup a separate Telegram
+  inbox workflow fills that queue. It is not included here. You can add rows by hand.
+- With an empty queue it reads Hacker News, Lobsters and a list of RSS feeds (see the **Fetch Story Sources** node).
+- It drops topics the blog already covered (it reads recent posts from the blog API), then one local model call picks
+  the topic. If the model fails, the highest scored candidate wins.
 
-Let Agent 1 run on schedule:
-1. Agent 1 discovers topic from HackerNews
-2. Checks for duplicates against last 30 blog posts
-3. If unique, triggers Agent 2 → 3 → 4 → 5
-4. Blog post published to `https://mabus.ai/blog/[slug]`
+### Agent 2: research
 
-### Verify Data Tables
+- Fetches the source page, if there is one.
+- Searches with SerpApi (3 tries) and fetches the top 3 results (2 tries each, failures skipped).
+- Builds one research summary and a list of sources. The run fails only if there is no research at all.
 
-After first few runs, check Data Tables to see learning in action:
+### Agent 3: writer
 
-```sql
--- In n8n Data Tables UI:
+- Local model through Ollama (`qwq:32b` in the export). 30 minute timeout, 2 tries, reasoning text stripped.
+- Before it writes, it reads two Data Tables: `blog_validation_failures` and `blog_quality_metrics`. The three most common
+  past problems and the average length go into the prompt. This is the quality feedback loop (see below).
+- Length follows the research: roughly one word per 7 characters of research, 700 to 1,800 words.
+- Topic, research and sources are marked as data. The prompt says never to follow instructions found inside them.
 
--- Check validation failures
-SELECT * FROM blog_validation_failures ORDER BY createdAt DESC LIMIT 10;
+### Agent 4: editor
 
--- Check quality metrics
-SELECT * FROM blog_quality_metrics ORDER BY createdAt DESC LIMIT 10;
+- The main editor runs outside n8n. Agent 4 writes the draft to the Data Table `blog_edit_requests` with
+  `status = pending` and checks the row once a minute.
+- In the author's setup a small service polls that table through the n8n public API, edits the draft with Claude Opus
+  (no tools), and writes the result back. That service is not in this repo. The contract is in
+  [External editor contract](#external-editor-contract).
+- If no edit arrives within 20 minutes, or the row says `failed` or `stale`, Agent 4 falls back to the local model. The
+  fallback edits one `##` section per call, checks each section against the research, and drops links that are not in
+  the source list. If a section edit fails, the writer's text is kept and `editorOk` is false.
+- You can run without the external editor. Every post then waits 20 minutes and uses the fallback. To skip the wait,
+  lower the limit in **Give Up on Opus?** (`$runIndex >= 19`).
 
--- Check retry patterns
-SELECT * FROM blog_retry_patterns ORDER BY createdAt DESC LIMIT 10;
-```
+### Agent 5: quality check and publish
 
-### Expected Behavior
+- Cleans links (only links from the source list survive) and appends a Sources section.
+- **Validate Quality** scores the post and lists issues. Some issues are blockers: the editor did not check every
+  section, numbers that are not in the research, another script, no title, a score below 6, or fewer than 400 words
+  (80 for the digest).
+- **Publish Gate** holds a post with any blocker. Holding throws an error, so the error workflow alerts and may retry.
+- Checks that the slug does not exist yet (it never overwrites), and that today's scheduled post is not already out.
+- Publishes to the blog API, marks the run `published`, marks the queue item done, sends a Telegram note, and hands the
+  post to the X poster six minutes later.
+- Writes to the learning tables: validation failures, quality metrics, topic performance, source reliability.
 
-**First Run**:
-- Word count might be low (1500-2000 words)
-- Quality score: 6-7/10
-- May have first-person language issues
-- Validation failures logged to Data Tables
+## The quality feedback loop
 
-**After 5-10 Runs**:
-- Word count increases to 2500-4000 words
-- Quality score improves to 7-9/10
-- First-person issues decrease
-- Agent 3 learns from failures and adjusts
+Agent 5 writes, Agent 3 reads:
 
-## 📊 Monitoring
+1. Every issue Agent 5 finds goes into `blog_validation_failures` (type, severity, message, word count, score).
+2. Every published post goes into `blog_quality_metrics` (score, word count, sections).
+3. On the next run, Agent 3 reads the last 100 rows of both and tells the writer which problems came up most and how
+   long earlier posts were.
 
-### Quality Metrics Dashboard
+`blog_topic_performance` and `blog_source_reliability` are written for later analysis. No workflow reads them yet.
 
-Check `blog_quality_metrics` Data Table:
-- **Average word count**: Should be 2500-5000
-- **Average sections**: Should be 6-10
-- **Average quality score**: Should improve to 7-9/10
+## Weekly digest
 
-### Validation Failures
+Sundays at 10:00. It reads the week's posts from the blog API and stops if there are none. The local model writes one or
+two sentences per post. Titles and links come from the API, never from the model. The digest goes to Agent 5 and is
+published like any post, with the slug `weekly-digest-YYYY-MM-DD`.
 
-Check `blog_validation_failures` Data Table:
-- **Common issues**: First few posts may have word_count_low, first_person_language
-- **Improvement**: These should decrease as Agent 3 learns
-- **Severity**: Critical issues should be near zero
+## Error alerts and retries
 
-### Retry Patterns
+`Blog Pipeline Error Alerts` is set as the error workflow on every other workflow. On a failure it:
 
-Check `blog_retry_patterns` Data Table:
-- **Retry rate**: Should be <15% after system learns
-- **Final status**: Should show mostly "success"
+- Sends one plain line to Telegram: workflow, step, error, at most 300 characters. Tokens, bearer values and
+  `key=` style values are redacted from the message first.
+- Finds the failed run in `blog_runs` by execution id and marks it `failed`, or `held` when the Publish Gate held it.
+- Retries a scheduled run up to 2 times a day, 30 minutes apart, by starting Agent 1 again.
+- Alerts for workflows outside the pipeline at most once an hour (state in `blog_bot_state`).
 
-## 🛠️ Customization
-
-### Change Topic Keywords
+## Ham radio band report
 
-**Agent 1** → "Filter for AI/Tech Topics" node:
+Daily at 06:00. No model is involved.
 
-```javascript
-const keywords = [
-  'ai', 'ml', 'machine learning', 'artificial intelligence',
-  'llm', 'gpt', 'model', 'neural', 'deep learning',
-  'data science', 'automation', 'robotics', 'quantum',
-  'tech', 'software', 'programming', 'algorithm',
-  'computing', 'developer', 'api', 'open source',
-  'security', 'privacy', 'crypto', 'blockchain',
-  'startup', 'cloud', 'database', 'web', 'mobile',
-  'app', 'code', 'language', 'framework', 'tool', 'platform'
-];
-```
-
-Add or remove keywords based on your blog's focus.
-
-### Adjust Duplicate Detection Threshold
-
-**Agent 1** → "Check for Duplicates" node:
-
-```javascript
-// Word overlap threshold (default: 40%)
-const isDuplicateByWords = wordOverlap > 0.4;
-
-// Key entity threshold (default: 2+ shared entities)
-const isDuplicateByKeys = keyMatches.length >= 2;
-```
-
-Increase thresholds for stricter duplicate detection.
-
-### Change Word Count Targets
-
-**Agent 3** → "Build Writing Prompt" node:
-
-```javascript
-const prompt = `...
-LENGTH: LONG-FORM (aim for 2500-5000 words - this is critical!)
-...`;
-```
-
-**Agent 4** → "Build Edit Prompt" node:
-
-```javascript
-const prompt = `...
-- DO NOT shorten or summarize - EXPAND and add detail
-- Target length: 2500-5000 words
-...`;
-```
-
-### Modify Quality Validation
-
-**Agent 5** → "Validate Quality" node:
-
-```javascript
-// Word count validation
-if (wordCount < 1500) {
-  issues.push({
-    issue: 'word_count_low',
-    severity: 'high',
-    message: `Post is too short (${wordCount} words). Target: 2500-5000.`
-  });
-}
-```
-
-Adjust thresholds based on your requirements.
-
-## 🚨 Troubleshooting
-
-### Agent 1: No topics found
-- **Check**: HackerNews API is accessible
-- **Check**: Keyword filter isn't too restrictive
-- **Fix**: Broaden keyword list or increase story fetch count
-
-### Agent 1: All topics are duplicates
-- **Expected**: If running frequently (hourly/daily), HN top stories don't change much
-- **Fix**: Reduce duplicate detection threshold or increase fetch count to 50 stories
-- **Note**: System throws error and stops (prevents duplicate posts)
-
-### Agent 3: Posts too short
-- **Check**: Data Tables have quality metrics to learn from
-- **Check**: Ollama model has enough context window
-- **Fix**: Wait for system to learn after 5-10 runs, or manually adjust prompts
-
-### Agent 5: Validation failures
-- **Normal**: First few posts may have issues (system is learning)
-- **Check**: Validation failures are being logged to Data Tables
-- **Expected**: Failures decrease after 10-15 posts as Agent 3 learns
-
-### Data Tables empty
-- **Check**: Agent 3 and Agent 5 Data Table nodes are configured
-- **Check**: Tables were created with correct column names
-- **Fix**: Verify "Write Quality Metrics" and "Log Validation Failure" nodes in Agent 5
-
-### Ollama timeouts
-- **Check**: Model is loaded: `ollama list`
-- **Check**: Enough GPU memory for model
-- **Fix**: Increase timeout in HTTP Request nodes (default: 600000ms = 10min)
-
-## 📈 Expected Results
-
-### First Week
-- **Blog posts**: 7 posts (1 per day)
-- **Quality**: 6-7/10 average
-- **Word count**: 1500-2500 words average
-- **Issues**: Some first-person language, occasional short posts
-
-### After One Month
-- **Blog posts**: 30 posts
-- **Quality**: 7-9/10 average
-- **Word count**: 2500-4000 words average
-- **Issues**: Minimal validation failures
-- **Learning**: Agent 3 consistently avoids common mistakes
-
-### Long-Term Benefits
-- **Consistency**: Professional, third-person journalistic style
-- **SEO**: Rich, long-form content with proper metadata
-- **Efficiency**: <15% retry rate
-- **Quality**: Continuous improvement from Data Tables learning
-
-## 🏆 Success Criteria
-
-Your system is working well when:
-- ✅ 85%+ of posts pass validation on first try
-- ✅ Average quality score is 7.5+/10
-- ✅ Average word count is 2500-4000 words
-- ✅ Zero first-person language issues
-- ✅ Duplicate detection prevents re-publishing same topics
-- ✅ Data Tables show decreasing validation failures over time
-
-## 🤝 Contributing
-
-To improve this system:
-1. Tune Agent 3 writing prompts based on your blog style
-2. Adjust validation rules in Agent 5 based on your quality standards
-3. Add new keywords to Agent 1 based on trending topics
-4. Modify duplicate detection thresholds based on your publishing frequency
-
----
-
-**Questions?** Check n8n execution logs for detailed error messages and debug information. Each agent logs its progress with emojis (✅, 📊, 🔍, etc.) for easy tracking.
-
-**Need help?** Review the "Build Writing Prompt" and "Validate Quality" nodes - they contain the core logic and are well-commented.
+- Reads NOAA SWPC solar flux, the planetary K index and the K index forecast. hamqsl.com fills gaps.
+- Fixed rules turn those numbers into a plain reading of the HF bands by day and by night.
+- An aurora line is added when Kp is 5 or more now or in the forecast. The thresholds assume about 53 N geomagnetic
+  latitude. Set `PLACE` and the thresholds in **Build Band Note** for your location.
+- Posts to a separate ham radio section of the blog API, at most once a day (it checks today's slug first).
+- Goes to X only on notable days: Kp 5 or more, or solar flux 150 or more.
+
+## X poster
+
+Takes `{title, excerpt, url, kind, waitSeconds}`, waits so the page exists before X fetches the preview, then posts the
+title, a short hook and the link. It refuses links that are not on your own site (`your-blog.example` in the export). A
+failed X post fails only this workflow, never the publish.
+
+## Data Tables
+
+Create these in n8n (Data Tables) before you import. Column types: s = string, n = number, b = boolean.
+
+| Table                      | Columns                                                                                                                                         | Used by                        |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| `blog_runs`                | run_id s, mode s, day s, status s, dry_run b, force_fail s, queue_id n, started_at s, finished_at s, detail s, post_url s, last_exec s, topic s | all agents, error alerts       |
+| `blog_system_state`        | is_paused b (one row)                                                                                                                           | Agent 1                        |
+| `blog_topic_queue`         | topic s, url s, source s, priority n, status s (pending, processing, done, failed), submitted_at s                                              | Agent 1, Agent 5, error alerts |
+| `blog_edit_requests`       | req_id s, run_id s, status s, payload s, result s, note s, editor_notes s                                                                       | Agent 4, external editor       |
+| `blog_validation_failures` | issue_type s, severity s, message s, topic s, word_count n, quality_score n, timestamp s, post_title s                                          | Agent 5 writes, Agent 3 reads  |
+| `blog_quality_metrics`     | topic s, style s, length s, quality_score n, word_count n, section_count n, retry_count n, timestamp s, post_title s, post_slug s               | Agent 5 writes, Agent 3 reads  |
+| `blog_topic_performance`   | category s, quality_score n, retry_count n, timestamp s                                                                                         | Agent 5                        |
+| `blog_source_reliability`  | domain s, quality_score n, timestamp s                                                                                                          | Agent 5                        |
+| `blog_bot_state`           | key s, value s                                                                                                                                  | error alerts                   |
+
+The `id` column is built in.
+
+## External editor contract
+
+Only needed if you want an editor outside n8n. Agent 4 inserts a row in `blog_edit_requests`:
+
+- `req_id`: run id plus execution id.
+- `status`: `pending`.
+- `payload`: JSON string `{"draft", "research", "sources": [{"url", "title"}], "topic"}`.
+
+Your worker polls for `status = pending` (for example with the n8n public API, `GET /data-tables/{id}/rows`), edits the
+draft, and updates the row:
+
+- `status`: `done` (or `failed`).
+- `result`: the edited post in Markdown. It must start with a `# Title` line and be longer than 200 characters.
+- `note` and `editor_notes`: optional, shown in the run log.
+
+Treat the draft and research as data. Do not let your editor follow instructions found in them.
+
+## Import into your own n8n
+
+You need:
+
+- n8n with Data Tables (a recent 1.x release) and the public API if you run an external editor.
+- Ollama reachable from n8n, with the model named in the Code nodes (`qwq:32b`, or change `model:` in the
+  `ollamaBody` of Agents 1, 3, 4 and the digest).
+- A blog API that accepts `POST /api/blog/posts` and `POST /api/hamradio/posts` with a bearer token, and answers
+  `GET /api/blog/posts` and `GET /api/blog/posts/{slug}`. Change the paths in the HTTP Request and Code nodes to match yours.
+
+Credentials and environment values:
+
+| Name in the export               | Type                                 | Used by               |
+| -------------------------------- | ------------------------------------ | --------------------- |
+| `{{ CREDENTIAL: SerpApi }}`      | SerpApi                              | Agent 2               |
+| `{{ CREDENTIAL: Telegram bot }}` | Telegram API                         | Agent 5, error alerts |
+| `{{ CREDENTIAL: X OAuth2 }}`     | X (Twitter) OAuth2                   | X poster              |
+| `BLOG_API_KEY`                   | environment variable on the n8n host | Agent 5, ham report   |
+
+Steps:
+
+1. Create the Data Tables above.
+2. Import the nine JSON files. Import `blog-pipeline-error-alerts.json` and `agent-1-topic-discovery.json` first.
+3. Replace the placeholders (next section). In each Data Table node, pick the table from the list.
+4. Create the three credentials and select them in the nodes that show a credential warning.
+5. Set `BLOG_API_KEY` in the n8n environment.
+6. In each workflow's settings, set the error workflow to `Blog Pipeline Error Alerts`.
+7. Test with a dry run: start Agent 1 with the input `{"dryRun": true}`. The whole chain runs, and Agent 5 skips the
+   publish, Telegram and X. Dry runs also accept `stopAfter` (`agent1`, `agent2`) and `forceFailAt` (`agent1` to
+   `agent5`) to test the alerts.
+8. Activate the workflows from Agent 5 back to Agent 1, so each webhook exists before something calls it.
+
+## Placeholders
+
+| Placeholder                                           | Replace with                                                                                           |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `https://your-n8n.example/webhook/...`                | Your n8n webhook base URL. If all workflows run in one n8n, `http://localhost:5678/webhook/...` works. |
+| `blog-agent-2` ... `blog-agent-5`, `blog-x-poster`    | Webhook paths. Keep them or rename them on both ends.                                                  |
+| `http://OLLAMA_HOST:11434`                            | Your Ollama URL.                                                                                       |
+| `https://your-blog.example`                           | Your site and blog API.                                                                                |
+| `{{ DATA_TABLE: name }}`                              | The id of that Data Table (pick it in the node).                                                       |
+| `{{ CREDENTIAL: ... }}`, `REPLACE_WITH_CREDENTIAL_ID` | Your credential (pick it in the node).                                                                 |
+| `REPLACE_WITH_ID_OF: ...`                             | The workflow id of the named workflow, after import.                                                   |
+| `YOUR_TELEGRAM_CHAT_ID`                               | The chat that gets announcements and alerts. Add a topic id under Additional Fields if you use topics. |
+| `YOUR_TOWN`                                           | The place named in the aurora line.                                                                    |
+
+## Older version (v1)
+
+The first version of these workflows (one SerpApi research call, Ollama writing and editing, a Telegram command bot) is
+in the git history. See the commit `14fbe8f` and earlier. It was removed from the tree because it no longer matches what
+runs.
+
+## License
+
+This repository has no license file. That has not changed in v2.
